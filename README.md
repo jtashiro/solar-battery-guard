@@ -201,6 +201,33 @@ voltage/current on the display:
 SoC will drift over days/weeks like any coulomb counter - repeat step 2 or 3
 occasionally (e.g. whenever the bank naturally hits full) to re-anchor it.
 
+### Power, Consumed Ah, and Time Remaining
+
+The TBD-SmartShunt only reports raw voltage and current over UART - it
+does not natively report power, consumed Ah, or time remaining as
+distinct fields (what the FE-Shunt phone app shows for these is almost
+certainly computed client-side from the same raw voltage/current stream,
+not sent by the shunt hardware itself). This project computes its own
+versions of all three, exposed as regular sensors:
+
+- **Battery Power** (W) - simply voltage x current, negative while
+  discharging, positive while charging.
+- **Consumed Ah** - a second coulomb counter, independent of the Wh-based
+  SoC one, tracking net Ah removed since the battery was last calibrated
+  to 100% (always <= 0). Reset by the same **Set Charged State** /
+  **Set Discharged State** presses used for SoC calibration - no separate
+  calibration step needed.
+- **Time Remaining** (hours) - current stored energy divided by the
+  present discharge rate. Only meaningful while actively discharging;
+  reads unavailable while charging, idle, or before SoC is calibrated,
+  since "time until empty" isn't a sensible number in those states.
+
+All three are also shown on-screen on both devices (a compact line below
+the voltage/current readout, e.g. "-109W  -0.1Ah  70.3h left"). The
+monitor viewer pulls them the same way it pulls everything else - via
+whichever mechanism `select.solar_battery_monitor_data_source` currently
+has selected.
+
 ## Charger control logic
 
 Two adjustable thresholds (numbers, live-editable from Home Assistant),
@@ -274,3 +301,80 @@ Mode" in your HA profile to see that field).
 - Push notifications via the ESPHome device itself (e.g. a piezo/speaker
   alert, since the CYD has one wired to GPIO26) for critical-low SoC,
   independent of Home Assistant being reachable.
+
+## Second device: display-only viewer (`solar_battery_monitor.yaml`)
+
+A separate, optional ESP32 CYD board (same LCDWIKI ESP32-32E/E32R28T
+hardware) that shows battery status on its own screen elsewhere in the
+house/vehicle/vessel, without any shunt wired to it. It has no local
+sensing or charger-control logic at all - every value it displays (SoC,
+voltage, current, charger status/mode) is read from the main
+`solar-battery-guard` device's entities already in Home Assistant.
+
+**Prerequisite**: the main solar-battery-guard device must already be set
+up and reporting into Home Assistant, since this device has nothing to
+show otherwise.
+
+### Why this polls Home Assistant's REST API instead of using ESPHome's push subscription
+
+The first version of this device used ESPHome's `platform: homeassistant`
+sensor/binary_sensor/text_sensor integrations, which subscribe to entity
+states and have Home Assistant push updates as they change. In practice
+this was unreliable here: it depends on Home Assistant proactively
+sending a `SubscribeHomeAssistantStatesRequest` message that, for reasons
+never fully pinned down, wasn't reliably happening - even a full
+delete-and-rediscover of the device didn't fix it. Separately, ESPHome's
+`homeassistant` sensor platform is documented to not forward *unchanged*
+values even with `force_update` set on the source
+([esphome/esphome#13351](https://github.com/esphome/esphome/issues/13351)),
+which would have silently broken the SoC display specifically once it
+reached a stable value like 100%.
+
+Instead, `solar_battery_monitor.yaml` polls Home Assistant's REST API
+directly (`GET /api/states/<entity_id>`) on a fixed timer (`poll_interval`,
+default 10s) using the `http_request:` component, parses the JSON
+response, and stores the values in global variables the display reads
+from. This is a plain, predictable request/response cycle with no
+dependency on HA's push timing or dedup behavior.
+
+**Setup**:
+1. `cd esphome` (same folder - both device YAML files share one
+   `secrets.yaml`).
+2. Fill in `monitor_api_encryption_key` and `monitor_ota_password` in
+   `secrets.yaml` if not already done (kept separate from the main
+   device's credentials since it's a distinct physical unit).
+3. Fill in `ha_base_url` (your Home Assistant instance's local address,
+   e.g. `http://192.168.1.X:8123`) and `ha_long_lived_token` (generate one
+   from your HA profile: click your user icon (bottom-left) -> scroll to
+   bottom -> "Long-Lived Access Tokens" -> Create Token).
+4. `esphome run solar_battery_monitor.yaml` to flash over USB the first
+   time; OTA (`--device solar-battery-monitor.local`) after that.
+
+If you ever rename entities on the main device, update the URLs in
+`solar_battery_monitor.yaml`'s `interval:` polling block to match. **Don't
+just assume a rename produced the exact clean name you typed** - if
+another (often stale/orphaned) entity already occupies that exact
+entity_id, Home Assistant silently appends `_2` rather than erroring, and
+the REST API will 404 on the name you expected. Always verify the actual
+entity_id in Developer Tools -> States after renaming, for each entity
+individually.
+
+### Data Source select: comparing both mechanisms live
+
+The device also runs the original push-subscription mechanism (via
+ESPHome's `platform: homeassistant` entities, using the corrected entity
+IDs) in parallel with HTTP polling, and exposes a `select.solar_battery_monitor_data_source`
+entity ("HTTP Polling" / "Push Subscription") in Home Assistant that
+switches which one actually drives the display - no reflash needed to
+compare them.
+
+This exists because the push mechanism's original failure was likely
+caused mostly by the wrong-entity-name issue described above, rather than
+a deeper protocol problem - once the names were fixed, it may well work
+correctly. HTTP polling stays the default regardless of how that
+comparison turns out, since its failures are loud (an explicit 404 with
+the exact URL in the log) where the push mechanism's are silent - given
+how much debugging time the silent-failure mode cost on this project, that
+observability difference matters more than which one is marginally more
+efficient. HTTP requests are automatically skipped while "Push
+Subscription" is selected, so there's no wasted API load either way.

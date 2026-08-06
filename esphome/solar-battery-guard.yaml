@@ -107,6 +107,14 @@ globals:
     type: float
     restore_value: yes
     initial_value: '0'
+  # Net Ah removed since the battery was last calibrated to 100% (Set
+  # Charged State) - always <= 0, moves toward 0 while charging. Mirrors
+  # current_stored_energy but in Ah instead of Wh, since the shunt itself
+  # doesn't report a native "consumed Ah" field (see README).
+  - id: consumed_ah
+    type: float
+    restore_value: yes
+    initial_value: '0'
   - id: efficiency
     type: float
     restore_value: yes
@@ -226,7 +234,9 @@ switch:
     name: "Set Charged State (calibrate 100%)"
     lambda: return id(set_charged_state);
     turn_on_action:
-      - lambda: id(current_stored_energy) = id(capacity);
+      - lambda: |-
+          id(current_stored_energy) = id(capacity);
+          id(consumed_ah) = 0.0;
       - switch.template.publish:
           id: set_charged_sw
           state: OFF
@@ -236,7 +246,11 @@ switch:
     name: "Set Discharged State (calibrate low point)"
     lambda: return id(set_discharged_state);
     turn_on_action:
-      - lambda: id(current_stored_energy) = 0.0;
+      - lambda: |-
+          id(current_stored_energy) = 0.0;
+          if (!isnan(id(batt_voltage).state) && id(batt_voltage).state > 0) {
+            id(consumed_ah) = -(id(capacity) / id(batt_voltage).state);
+          }
       - switch.template.publish:
           id: set_discharged_sw
           state: OFF
@@ -258,14 +272,22 @@ sensor:
       id: batt_current
       accuracy_decimals: 2
     instantaneous_power:
+      name: "Battery Power"
       id: batt_power
-      internal: true
+      accuracy_decimals: 1
+      device_class: power
       on_value:
         then:
           lambda: |-
             static uint32_t last_update_time = 0;
             if (last_update_time != 0) {
               uint32_t dt = millis() - last_update_time;
+
+              // Ah accumulation (consumed_ah), independent of the Wh-based
+              // SoC tracking below - straight coulomb counting on current.
+              float ah_delta = id(batt_current).state * static_cast<float>(dt) / (1000.0f * 3600.0f);
+              id(consumed_ah) = std::min(0.0f, id(consumed_ah) + ah_delta);
+
               float energy = x * static_cast<float>(dt) / (1000.0f * 3600.0f);
               if (energy < 0) {
                 energy = -energy;
@@ -297,6 +319,28 @@ sensor:
       if (pct < 0) pct = 0;
       if (pct > 100) pct = 100;
       return pct;
+
+  - platform: template
+    name: "Consumed Ah"
+    unit_of_measurement: "Ah"
+    accuracy_decimals: 1
+    update_interval: 5s
+    lambda: return id(consumed_ah);
+
+  - platform: template
+    name: "Time Remaining"
+    unit_of_measurement: "h"
+    accuracy_decimals: 1
+    icon: "mdi:timer-sand"
+    update_interval: 5s
+    lambda: |-
+      // Only meaningful while discharging (negative power) with a
+      // calibrated capacity - otherwise there's no sensible "time until
+      // empty" estimate (charging, idle, or uncalibrated).
+      if (id(capacity) <= 0 || isnan(id(batt_power).state) || id(batt_power).state >= 0) {
+        return NAN;
+      }
+      return id(current_stored_energy) / -id(batt_power).state;
 
   - platform: template
     name: "Total Charge Energy"
@@ -443,6 +487,30 @@ display:
       }
       it.print(it.get_width() / 2, 150, id(font_medium), id(col_white),
                 TextAlign::CENTER, vbuf);
+
+      // Power / Consumed Ah / Time Remaining
+      char pbuf[48];
+      if (!isnan(id(batt_power).state)) {
+        char time_part[20];
+        if (id(capacity) > 0 && id(batt_power).state < 0) {
+          float hrs = id(current_stored_energy) / -id(batt_power).state;
+          if (hrs >= 24.0f) {
+            int days = static_cast<int>(hrs / 24.0f);
+            int rem_hours = static_cast<int>(hrs) % 24;
+            snprintf(time_part, sizeof(time_part), "%dd %dh left", days, rem_hours);
+          } else {
+            snprintf(time_part, sizeof(time_part), "%.1fh left", hrs);
+          }
+        } else {
+          snprintf(time_part, sizeof(time_part), "--h left");
+        }
+        snprintf(pbuf, sizeof(pbuf), "%.0fW  %.1fAh  %s",
+                  id(batt_power).state, id(consumed_ah), time_part);
+      } else {
+        snprintf(pbuf, sizeof(pbuf), "-- W  -- Ah  --h left");
+      }
+      it.print(it.get_width() / 2, 178, id(font_small_bold), id(col_grey),
+                TextAlign::CENTER, pbuf);
 
       // Charger status banner
       bool charging = id(charger_should_run).state;
