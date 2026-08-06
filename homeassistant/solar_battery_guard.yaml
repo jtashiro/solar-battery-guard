@@ -1,0 +1,93 @@
+# Home Assistant automation package for Solar Battery Guard.
+#
+# Requires `homeassistant:` -> `packages:` to be enabled in configuration.yaml,
+# pointing at the folder this file lives in, e.g.:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# then drop (or symlink) this file into that packages folder - or just paste
+# its contents into automations.yaml / configuration.yaml directly.
+#
+# BEFORE USE:
+#   1. Replace `switch.ac_charger_plug` below with the real entity ID of your
+#      Kasa/Tuya/Wemo smart plug (Settings -> Devices & Services -> your
+#      plug integration -> the switch entity).
+#   2. Confirm the ESPHome device's entity IDs match what's used here. They
+#      default to slugified from "Solar Battery Guard" - check
+#      Settings -> Devices & Services -> ESPHome -> Solar Battery Guard.
+
+automation:
+  - alias: "Solar Battery Guard - AC Charger Control"
+    description: >
+      Mirrors the ESP32's computed charger_should_run decision (SoC
+      threshold + hysteresis + manual override, all evaluated on-device) onto
+      the actual AC charger smart plug.
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+    condition:
+      - condition: state
+        entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+        state:
+          - "on"
+          - "off"
+    action:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+                state: "on"
+            sequence:
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.ac_charger_plug
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+                state: "off"
+            sequence:
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.ac_charger_plug
+
+  - alias: "Solar Battery Guard - Charger Plug Desync Alert"
+    description: >
+      Warns if the smart plug's actual state doesn't match what the guard
+      commanded, 2 minutes after a command - catches an offline/unresponsive
+      wifi plug during unattended charging.
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+        for:
+          minutes: 2
+    condition:
+      - condition: template
+        value_template: >
+          {{ (trigger.to_state.state == 'on') !=
+             (states('switch.ac_charger_plug') == 'on') }}
+    action:
+      - service: notify.notify
+        data:
+          title: "Solar Battery Guard"
+          message: >
+            AC charger plug state does not match commanded state
+            ({{ trigger.to_state.state }}). Check switch.ac_charger_plug -
+            it may be offline.
+
+  - alias: "Solar Battery Guard - Critical Low SoC Alert"
+    description: "Notify if SoC keeps falling after the charger was told to turn on - the charger itself may not be working."
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.solar_battery_guard_battery_soc
+        below: 15
+    action:
+      - service: notify.notify
+        data:
+          title: "Solar Battery Guard - Critical"
+          message: >
+            Battery SoC is {{ states('sensor.solar_battery_guard_battery_soc') }}%,
+            below 15%. Verify the AC charger is actually running.
