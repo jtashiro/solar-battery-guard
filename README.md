@@ -99,31 +99,26 @@ This is why the shunt UART below uses **GPIO27**, not GPIO22.
 
 ## Wiring
 
-The shunt's JST connector is 4-pin: **5V (blue) / GND (green) / TXD
-(yellow) / RXD (orange)**.
+The shunt's 4-pin JST connector was identified by multimeter directly on
+the physical unit (no documentation exists for this exact port):
 
-⚠️ **Voltage level not yet confirmed - do not wire until this is resolved.**
-The shunt's TXD is very likely 5V logic, which exceeds the ESP32 GPIO's
-3.3V-tolerant input rating. Wiring it directly into GPIO27 risks damaging
-that pin. **A voltage divider is needed between shunt TXD and GPIO27**
-unless/until confirmed otherwise:
+| Pin | Function | Measured |
+|---|---|---|
+| 1 | Power | Steady 3.48V DC |
+| 2 | TX | Fluctuating 3.38-3.39V DC (idles high, dips as it transmits) |
+| 3 | RX | (by elimination) |
+| 4 | GND | Continuity to shunt negative |
 
-```
-Shunt TXD (yellow, ~5V) ---[10kΩ]---+---[20kΩ]--- GND
-                                     |
-                               ESP32 GPIO27
-```
-
-This divides ~5V down to ~3.33V at the midpoint tap into GPIO27. Any
-similar 2:1 ratio (e.g. 1kΩ/2kΩ) works equally well - the ratio matters,
-not the exact resistor values.
+TX idles at ~3.38V, safely within the ESP32 GPIO's 3.3V-logic tolerance -
+**no voltage divider is needed**, unlike an earlier draft of this doc which
+assumed 5V logic based on a mislabeled reference.
 
 | Shunt pin | ESP32 CYD pin | Notes |
 |---|---|---|
-| TXD (yellow) | GPIO27, **through the divider above** | Never wire directly - see warning above |
-| GND (green) | GND | Common ground |
-| 5V (blue) | **do not connect** | The CYD has its own separate 5V supply (see Power below) - don't cross-connect |
-| RXD (orange) | **do not connect** | The ESP32 never needs to send data to the shunt |
+| Pin 2 (TX) | GPIO27 - **direct connection** | No divider needed, confirmed ~3.38V |
+| Pin 4 (GND) | GND | Common ground |
+| Pin 1 (Power) | **do not connect** | The CYD has its own separate 5V supply (see Power below) - don't cross-connect |
+| Pin 3 (RX) | **do not connect** | The ESP32 never needs to send data to the shunt |
 
 The ESP32 never transmits to the shunt, so no `tx_pin` is configured - the
 `uart:` block only sets `rx_pin: GPIO27`.

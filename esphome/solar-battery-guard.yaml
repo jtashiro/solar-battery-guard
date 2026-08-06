@@ -37,25 +37,33 @@ ota:
   platform: esphome
   password: !secret ota_password
 
+time:
+  - platform: homeassistant
+    id: ha_time
+
 improv_serial:
 
 # ---------------------------------------------------------------------------
 # TBD-SmartShunt (FE-Shunt app) battery monitor, read over its UART-TTL port
-# (JST-PH 4-pin: 5V/blue, GND/green, TXD/yellow, RXD/orange). Wire ONLY:
-#   Shunt TXD (yellow) -> [10k/20k voltage divider] -> ESP32 GPIO27 (rx_pin)
-#   Shunt GND  (green)  -> ESP32 GND
-# The shunt's TXD is 5V logic - the ESP32's GPIO is only 3.3V-tolerant, so
-# TXD MUST go through a voltage divider (10k to signal, 20k to GND, tap to
-# GPIO27) before reaching the ESP32. Do NOT wire the shunt's 5V (blue) pin
-# to the ESP32 - the CYD has its own separate 5V supply. Do NOT wire the
-# shunt's RXD (orange) at all - the ESP32 never transmits to the shunt, so
-# no tx_pin is configured below.
+# (4-pin JST: pin1 power/3.48V, pin2 TX, pin3 RX, pin4 GND - confirmed by
+# multimeter on the actual unit). Wire ONLY:
+#   Shunt TX (pin 2, ~3.38V idle) -> ESP32 IO35 (rx_pin, silkscreen-labeled
+#   on the board's spare expansion header) - direct, no divider needed,
+#   since 3.38V is safely within the ESP32's 3.3V-logic tolerance.
+#   Shunt GND (pin 4) -> ESP32 GND
+# Do NOT wire the shunt's power pin (pin 1) to the ESP32 - the CYD has its
+# own separate 5V supply. Do NOT wire the shunt's RX (pin 3) at all - the
+# ESP32 never transmits to the shunt, so no tx_pin is configured below.
+# Do NOT use the board's dedicated "UART" JST port for this - despite the
+# label, that port is wired to UART0, shared with the onboard USB-serial
+# programming/console chip, not a spare bus for external devices.
 #
-# GPIO27 (not GPIO22) is used here: per LCDWIKI's own pin table for this
-# exact board (E32R28T/ESP32-32E), GPIO22 is committed to the onboard red
-# LED, and GPIO4 is used as the display's reset pin - both contrary to
-# generic "CYD" pinout guides. GPIO27 and the input-only GPIO35 are the two
-# GPIOs actually left free - see README for the full confirmed pin map.
+# GPIO35 is input-only, which is fine since we only ever receive from the
+# shunt. Per LCDWIKI's own pin table for this exact board (E32R28T/
+# ESP32-32E), GPIO35 and GPIO27 are the only two GPIOs with no onboard
+# function - GPIO35 was chosen here because it's directly silkscreen-
+# labeled "IO35" on the board, removing any pin-identification ambiguity.
+# See README for the full confirmed pin map.
 # ---------------------------------------------------------------------------
 external_components:
   - source: github://webbbn/esphome-tbd-smartshunt
@@ -63,12 +71,19 @@ external_components:
 
 uart:
   id: shunt_uart
-  rx_pin: GPIO27
+  rx_pin: GPIO35
   baud_rate: 115200
   data_bits: 8
   stop_bits: 1
   parity: NONE
   rx_buffer_size: 256
+  debug:
+    # Kept temporarily to visually confirm real shunt bytes arrive once
+    # wiring is moved to IO35 - remove once confirmed working, since it
+    # logs every byte during normal operation.
+    direction: RX
+    after:
+      timeout: 50ms
 
 tbd_smart_shunt:
   uart_id: shunt_uart
@@ -176,6 +191,30 @@ select:
     initial_option: "Auto"
     restore_value: true
     optimistic: true
+
+  # --- TEMP DEBUG: lets you try different shunt UART baud rates live from
+  # Home Assistant without reflashing. Watch `esphome logs` after changing
+  # this - if "Last transmission too long ago" warnings stop and real
+  # voltage/current values appear, that's the correct baud rate. Remove
+  # this entity and hardcode the confirmed value in the uart: block above
+  # once found. ---
+  - platform: template
+    id: shunt_baud_debug
+    name: "${friendly_name} DEBUG Shunt UART Baud Rate"
+    options:
+      - "115200"
+      - "57600"
+      - "38400"
+      - "19200"
+      - "9600"
+    initial_option: "115200"
+    optimistic: true
+    set_action:
+      - lambda: |-
+          uint32_t baud = atoi(x.c_str());
+          id(shunt_uart).set_baud_rate(baud);
+          id(shunt_uart).load_settings(false);
+          ESP_LOGI("shunt_baud_debug", "Switched shunt UART to %u baud", baud);
 
 switch:
   - platform: template
@@ -346,6 +385,9 @@ font:
   - file: "gfonts://Roboto@700"
     id: font_small_bold
     size: 18
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 13
 
 display:
   - platform: ili9xxx
@@ -367,6 +409,20 @@ display:
 
       // Header
       it.print(10, 6, id(font_small_bold), id(col_grey), "SOLAR BATTERY GUARD");
+
+      // Status line: current date/time + shunt UART baud rate (debug aid)
+      auto now = id(ha_time).now();
+      char status_buf[40];
+      if (now.is_valid()) {
+        snprintf(status_buf, sizeof(status_buf), "%04d-%02d-%02d %02d:%02d:%02d  %u baud",
+                  now.year, now.month, now.day_of_month,
+                  now.hour, now.minute, now.second, id(shunt_uart).get_baud_rate());
+      } else {
+        snprintf(status_buf, sizeof(status_buf), "----:--:-- --:--:--  %u baud",
+                  id(shunt_uart).get_baud_rate());
+      }
+      it.print(it.get_width() - 10, 6 + 18 + 6, id(font_tiny), id(col_grey),
+                TextAlign::TOP_RIGHT, status_buf);
 
       // Battery SoC (big number, center)
       if (isnan(id(battery_soc).state)) {
