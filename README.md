@@ -15,7 +15,7 @@ monitor + AC charger controller for a solar battery bank:
 ## Architecture
 
 ```
-TBD-SmartShunt --UART(2.8V TX/GND)--> ESP32 CYD --WiFi(ESPHome API)--> Home Assistant --> Kasa/Tuya/Wemo plug --> AC charger
+TBD-SmartShunt --UART(TX/GND, ~3.3V)--> ESP32 CYD --WiFi(ESPHome API)--> Home Assistant --> Kasa/Tuya/Wemo plug --> AC charger
                                           |
                                      ILI9341 display
 ```
@@ -93,9 +93,31 @@ confirmed pin map:
 | Battery ADC | 34 | No |
 | Audio enable / DAC | 4 (shared w/ TFT reset) / 26 | No |
 | Boot button | 0 | No |
+| Dedicated "UART" JST port | shares UART0 w/ USB programming chip | **No - see warning below** |
 | **Free** | **27, 35 (input-only)** | **Yes** |
 
-This is why the shunt UART below uses **GPIO27**, not GPIO22.
+This is why the shunt UART below uses **IO35** (not GPIO22, and not the
+board's dedicated "UART" port - see the next section).
+
+### ⚠️ The board's dedicated "UART" port is a trap
+
+This board has a separate 4-pin JST connector silkscreened simply
+"UART", clearly labeled 5V/GND/TXD/RXD - it looks exactly like a spare
+port for connecting an external serial device like the shunt. **It is
+not.** Per LCDWIKI's own schematic documentation, this port is wired
+directly to the ESP32's primary UART0, the same lines used by the onboard
+USB-to-serial programming/console chip. Connecting an external device
+there puts it in electrical contention with the USB chip - it will not
+communicate reliably (or at all), and it does **not** correspond to
+whatever GPIO your firmware's `uart:` block is configured for.
+
+This cost significant debugging time on this project: the shunt was wired
+to that port, while the firmware listened on a separate, genuinely-free
+GPIO - so every diagnostic (voltage checks, baud rate sweeps, even an
+internal loopback test) came up empty, because the two ends were never
+actually on the same wire. Use the small **separate** expansion header
+(silkscreened with individual GPIO numbers like "IO35") for any external
+device instead - never the labeled "UART" port.
 
 ## Wiring
 
@@ -115,25 +137,26 @@ assumed 5V logic based on a mislabeled reference.
 
 | Shunt pin | ESP32 CYD pin | Notes |
 |---|---|---|
-| Pin 2 (TX) | GPIO27 - **direct connection** | No divider needed, confirmed ~3.38V |
-| Pin 4 (GND) | GND | Common ground |
+| Pin 2 (TX) | **IO35** on the small expansion header - **direct connection** | No divider needed, confirmed ~3.38V. This is NOT the board's dedicated "UART" JST port - see the warning above. |
+| Pin 4 (GND) | Any GND pin | Common ground |
 | Pin 1 (Power) | **do not connect** | The CYD has its own separate 5V supply (see Power below) - don't cross-connect |
 | Pin 3 (RX) | **do not connect** | The ESP32 never needs to send data to the shunt |
 
 The ESP32 never transmits to the shunt, so no `tx_pin` is configured - the
-`uart:` block only sets `rx_pin: GPIO27`.
+`uart:` block only sets `rx_pin: GPIO35`.
 
-**Baud rate:** the config is set to 115200 (matching the tested example
-from the `webbbn/esphome-tbd-smartshunt` component). If the display shows
-"NO SHUNT DATA" after wiring is correct and double-checked, try changing
-`baud_rate` in the `uart:` block of `solar-battery-guard.yaml` to `19200`
-and reflashing - one secondary source describes this shunt's UART port at
-that rate instead.
+**Baud rate:** confirmed working at 115200 (the config default) once wired
+to the correct pin - real data flows immediately. If you ever need to
+experiment with other rates, there's a `select.solar_battery_guard_debug_shunt_uart_baud_rate`
+entity in Home Assistant that changes the baud live without reflashing
+(useful for testing, remove from the config once no longer needed).
 
-GPIO27 was chosen because it's one of only two GPIOs actually free on this
-board - see [Board identification](#board-identification-important) above
-for the full confirmed pin map (GPIO22, commonly free on generic CYD
-guides, is committed to the onboard LED on this specific board).
+IO35 was chosen over the other free pin (GPIO27) purely because it's
+directly silkscreen-labeled "IO35" on this board's expansion header,
+removing any ambiguity about which physical pin it is - GPIO27 remains
+available on the same header as an alternative if you ever need a second
+free GPIO (it just requires more careful pin counting to identify, since
+it isn't individually labeled to the same degree on this board).
 
 ## Firmware setup (ESPHome)
 
@@ -143,15 +166,17 @@ guides, is committed to the onboard LED on this specific board).
    with `esphome generate-key` or `openssl rand -base64 32`).
 3. Validate: `esphome config solar-battery-guard.yaml`
 4. Flash over USB the first time: `esphome run solar-battery-guard.yaml`
-   (subsequent updates can go out over OTA/WiFi).
-5. If the screen is upside-down or sideways after boot, change
-   `display_rotation` in the substitutions block at the top of
-   `solar-battery-guard.yaml` to `90`, `180`, or `270` and reflash - CYD
-   units vary by vendor batch.
+   (subsequent updates can go out over OTA/WiFi once connected to your
+   network - use `esphome upload solar-battery-guard.yaml --device
+   solar-battery-guard.local` or `esphome logs ... --device
+   solar-battery-guard.local` to target it by hostname rather than a
+   hardcoded IP, since DHCP may reassign its address between reboots).
 
 The device will boot and show the display even with nothing wired to the
-shunt yet - it just displays "NO SHUNT DATA" until GPIO22 is connected and
-receiving data.
+shunt yet - it just displays "NO SHUNT DATA" until IO35 is connected and
+receiving data. The display also shows the current date/time (synced from
+Home Assistant) and the shunt UART's active baud rate in the top-right
+corner as a quick on-device status check.
 
 ## Calibrating State of Charge
 
@@ -204,6 +229,25 @@ This gives you three automations: the core charger control mirror, a
 desync alert if the plug doesn't respond to a command within 2 minutes, and
 a critical-low-SoC notification as a backstop in case the charger itself
 has failed.
+
+### Entity ID gotcha
+
+Entity `name:` fields in `solar-battery-guard.yaml` are intentionally
+short (e.g. `"AC Charger Should Run"`, not `"Solar Battery Guard AC
+Charger Should Run"`) - Home Assistant's ESPHome integration
+automatically prefixes the *device's* friendly name onto each entity for
+display, so adding it again in the entity name causes a doubled name
+(`solar_battery_guard_solar_battery_guard_...`). Don't reintroduce that
+prefix if you add new entities.
+
+If you ever see a doubled entity_id like that in practice (e.g. after
+re-pairing the device), it's likely a stale Home Assistant entity
+registry entry that didn't get regenerated cleanly - deleting and
+re-adding the ESPHome integration doesn't always clear it. The reliable
+fix is a manual rename: open the entity in Settings -> Devices & Services
+-> Entities, click the gear/settings icon, and directly edit its Entity
+ID field to the expected clean value (you may need to enable "Advanced
+Mode" in your HA profile to see that field).
 
 ## Safety notes
 

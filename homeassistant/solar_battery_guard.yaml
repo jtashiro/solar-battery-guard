@@ -10,9 +10,11 @@
 # its contents into automations.yaml / configuration.yaml directly.
 #
 # BEFORE USE:
-#   1. Replace `switch.ac_charger_plug` below with the real entity ID of your
-#      Kasa/Tuya/Wemo smart plug (Settings -> Devices & Services -> your
-#      plug integration -> the switch entity).
+#   1. Plug entity is set to switch.charger_and_fan_socket_2 - note this
+#      outlet's name suggests it may also power a fan, not just the AC
+#      charger. Double-check nothing else you care about is sharing this
+#      socket before enabling these automations, since it'll be switched
+#      on/off automatically based on battery SoC.
 #   2. Confirm the ESPHome device's entity IDs match what's used here. They
 #      default to slugified from "Solar Battery Guard" - check
 #      Settings -> Devices & Services -> ESPHome -> Solar Battery Guard.
@@ -42,7 +44,7 @@ automation:
             sequence:
               - service: switch.turn_on
                 target:
-                  entity_id: switch.ac_charger_plug
+                  entity_id: switch.charger_and_fan_socket_2
           - conditions:
               - condition: state
                 entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
@@ -50,7 +52,7 @@ automation:
             sequence:
               - service: switch.turn_off
                 target:
-                  entity_id: switch.ac_charger_plug
+                  entity_id: switch.charger_and_fan_socket_2
 
   - alias: "Solar Battery Guard - Charger Plug Desync Alert"
     description: >
@@ -67,14 +69,14 @@ automation:
       - condition: template
         value_template: >
           {{ (trigger.to_state.state == 'on') !=
-             (states('switch.ac_charger_plug') == 'on') }}
+             (states('switch.charger_and_fan_socket_2') == 'on') }}
     action:
       - service: notify.notify
         data:
           title: "Solar Battery Guard"
           message: >
             AC charger plug state does not match commanded state
-            ({{ trigger.to_state.state }}). Check switch.ac_charger_plug -
+            ({{ trigger.to_state.state }}). Check switch.charger_and_fan_socket_2 -
             it may be offline.
 
   - alias: "Solar Battery Guard - Critical Low SoC Alert"

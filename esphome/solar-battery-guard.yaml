@@ -77,13 +77,6 @@ uart:
   stop_bits: 1
   parity: NONE
   rx_buffer_size: 256
-  debug:
-    # Kept temporarily to visually confirm real shunt bytes arrive once
-    # wiring is moved to IO35 - remove once confirmed working, since it
-    # logs every byte during normal operation.
-    direction: RX
-    after:
-      timeout: 50ms
 
 tbd_smart_shunt:
   uart_id: shunt_uart
@@ -137,7 +130,7 @@ preferences:
 number:
   - platform: template
     id: battery_capacity_kwh
-    name: "${friendly_name} Battery Capacity"
+    name: "Battery Capacity"
     unit_of_measurement: "kWh"
     max_value: 100
     min_value: 0.1
@@ -149,7 +142,7 @@ number:
 
   - platform: template
     id: battery_charge_efficiency
-    name: "${friendly_name} Charge Efficiency"
+    name: "Charge Efficiency"
     max_value: 2.0
     min_value: 0.5
     step: 0.01
@@ -160,7 +153,7 @@ number:
 
   - platform: template
     id: soc_turn_on_threshold
-    name: "${friendly_name} Charger Turn-On SoC"
+    name: "Charger Turn-On SoC"
     unit_of_measurement: "%"
     min_value: 5
     max_value: 95
@@ -171,7 +164,7 @@ number:
 
   - platform: template
     id: soc_turn_off_threshold
-    name: "${friendly_name} Charger Turn-Off SoC"
+    name: "Charger Turn-Off SoC"
     unit_of_measurement: "%"
     min_value: 10
     max_value: 100
@@ -183,7 +176,7 @@ number:
 select:
   - platform: template
     id: charger_override_mode
-    name: "${friendly_name} Charger Mode"
+    name: "Charger Mode"
     options:
       - "Auto"
       - "Force ON"
@@ -200,7 +193,7 @@ select:
   # once found. ---
   - platform: template
     id: shunt_baud_debug
-    name: "${friendly_name} DEBUG Shunt UART Baud Rate"
+    name: "DEBUG Shunt UART Baud Rate"
     options:
       - "115200"
       - "57600"
@@ -218,7 +211,7 @@ select:
 
 switch:
   - platform: template
-    name: "${friendly_name} Reset Energy Stats"
+    name: "Reset Energy Stats"
     lambda: return id(reset_energy_state);
     turn_on_action:
       - lambda: |-
@@ -230,7 +223,7 @@ switch:
     id: reset_energy_stats_sw
 
   - platform: template
-    name: "${friendly_name} Set Charged State (calibrate 100%)"
+    name: "Set Charged State (calibrate 100%)"
     lambda: return id(set_charged_state);
     turn_on_action:
       - lambda: id(current_stored_energy) = id(capacity);
@@ -240,7 +233,7 @@ switch:
     id: set_charged_sw
 
   - platform: template
-    name: "${friendly_name} Set Discharged State (calibrate low point)"
+    name: "Set Discharged State (calibrate low point)"
     lambda: return id(set_discharged_state);
     turn_on_action:
       - lambda: id(current_stored_energy) = 0.0;
@@ -251,17 +244,17 @@ switch:
 
 sensor:
   - platform: wifi_signal
-    name: "${friendly_name} WiFi Signal"
+    name: "WiFi Signal"
     update_interval: 60s
     entity_category: diagnostic
 
   - platform: tbd_smart_shunt
     battery_voltage:
-      name: "${friendly_name} Battery Voltage"
+      name: "Battery Voltage"
       id: batt_voltage
       accuracy_decimals: 2
     battery_current:
-      name: "${friendly_name} Battery Current"
+      name: "Battery Current"
       id: batt_current
       accuracy_decimals: 2
     instantaneous_power:
@@ -293,7 +286,7 @@ sensor:
 
   - platform: template
     id: battery_soc
-    name: "${friendly_name} Battery SoC"
+    name: "Battery SoC"
     unit_of_measurement: "%"
     accuracy_decimals: 1
     device_class: battery
@@ -306,14 +299,14 @@ sensor:
       return pct;
 
   - platform: template
-    name: "${friendly_name} Total Charge Energy"
+    name: "Total Charge Energy"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
     update_interval: 5s
     lambda: return id(total_energy_in) / 1000.0;
 
   - platform: template
-    name: "${friendly_name} Total Discharge Energy"
+    name: "Total Discharge Energy"
     unit_of_measurement: "kWh"
     accuracy_decimals: 2
     update_interval: 5s
@@ -322,7 +315,7 @@ sensor:
 binary_sensor:
   - platform: template
     id: charger_should_run
-    name: "${friendly_name} AC Charger Should Run"
+    name: "AC Charger Should Run"
     device_class: power
     lambda: |-
       std::string mode = id(charger_override_mode).state;
@@ -357,7 +350,7 @@ output:
 light:
   - platform: monochromatic
     output: backlight_pwm
-    name: "${friendly_name} Backlight"
+    name: "Backlight"
     id: back_light
     restore_mode: ALWAYS_ON
 
