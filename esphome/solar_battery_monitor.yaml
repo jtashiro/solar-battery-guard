@@ -612,6 +612,9 @@ font:
   - file: "gfonts://Roboto"
     id: font_tiny
     size: 13
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 16
 
 display:
   - platform: ili9xxx
@@ -654,8 +657,13 @@ display:
       } else {
         snprintf(status_buf, sizeof(status_buf), "----:--:-- --:--:--");
       }
-      it.print(it.get_width() - 10, 6 + 18 + 6, id(font_tiny), id(col_grey),
-                TextAlign::TOP_RIGHT, status_buf);
+      if (app_style) {
+        it.print(it.get_width() / 2, 6 + 18 + 6, id(font_tiny), id(col_grey),
+                  TextAlign::TOP_CENTER, status_buf);
+      } else {
+        it.print(it.get_width() - 10, 6 + 18 + 6, id(font_tiny), id(col_grey),
+                  TextAlign::TOP_RIGHT, status_buf);
+      }
 
       // Pick which data source feeds the display, based on the "Data
       // Source" select - normalizes both mechanisms to the same set of
@@ -675,8 +683,16 @@ display:
       } else {
         snprintf(last_update_buf, sizeof(last_update_buf), "Updated: never (%s)", source_label);
       }
-      it.print(10, 6 + 18 + 6, id(font_tiny), id(col_grey),
-                TextAlign::TOP_LEFT, last_update_buf);
+      // Stacked below the date/time line (not beside it) - side-by-side
+      // fit fine on the original wide landscape canvas, but collide in
+      // App Style's narrower rotated canvas.
+      if (app_style) {
+        it.print(it.get_width() / 2, 6 + 18 + 6 + 14, id(font_tiny), id(col_grey),
+                  TextAlign::TOP_CENTER, last_update_buf);
+      } else {
+        it.print(10, 6 + 18 + 6 + 14, id(font_tiny), id(col_grey),
+                  TextAlign::TOP_LEFT, last_update_buf);
+      }
 
       bool soc_valid = use_push ? !isnan(id(battery_soc_push).state) : id(battery_soc_valid);
       float soc = use_push ? id(battery_soc_push).state : id(battery_soc_g);
@@ -734,9 +750,14 @@ display:
         int w = it.get_width();
         int h = it.get_height();
         int cx = w / 2;
-        int cy = static_cast<int>(h * 0.28f);
-        float r_outer = std::min(w, h) * 0.30f;
+        // Gauge sized smaller and anchored below a fixed header
+        // clearance (rather than a height-proportional cy) so its top
+        // edge never overlaps the "SOLAR BATTERY MONITOR" / "Updated..."
+        // header lines regardless of canvas size.
+        int header_clearance = 62;
+        float r_outer = std::min(w, h) * 0.22f;
         float r_inner = r_outer * 0.78f;
+        int cy = header_clearance + static_cast<int>(r_outer);
         Color gauge_color = id(col_green);
         if (soc_valid) {
           if (soc <= soc_on_th) gauge_color = id(col_red);
@@ -759,22 +780,36 @@ display:
         } else {
           it.print(cx, cy, id(font_tiny), id(col_grey), TextAlign::CENTER, "NO DATA");
         }
+        // Battery Status, inside the ring under the % - proportional to
+        // the gauge size so it stays inside r_inner regardless of canvas.
+        if (status_valid && !status.empty()) {
+          it.print(cx, cy + static_cast<int>(r_outer * 0.38f), id(font_tiny), id(col_teal),
+                    TextAlign::CENTER, status.c_str());
+        }
 
         // Rows stack below the gauge (portrait-style, matching the app's
         // layout) rather than beside it - correct regardless of whether
         // the rotated canvas ends up wide or tall, since it's all
         // relative to w/h rather than assuming a particular orientation.
-        int row_spacing = static_cast<int>(h * 0.085f);
-        int row_y = cy + static_cast<int>(r_outer) + row_spacing;
-        int icon_x = static_cast<int>(w * 0.12f);
-        int icon_r = static_cast<int>(w * 0.055f);
-        int label_x = static_cast<int>(w * 0.24f);
-        int value_x = static_cast<int>(w * 0.90f);
+        // icon_r shrunk and row_spacing widened relative to before -
+        // circles were previously touching/overlapping since spacing was
+        // barely larger than icon diameter, and 5 rows didn't fit in the
+        // available height at all (Time Remaining was pushed off-screen).
+        // icon_r shrunk further to free up horizontal room for the
+        // larger label/value font (font_small instead of font_tiny) -
+        // readability was the point of sizing up, so the icons give up
+        // the space rather than the text.
+        int row_spacing = static_cast<int>(h * 0.08f);
+        int row_y = cy + static_cast<int>(r_outer) + static_cast<int>(h * 0.05f);
+        int icon_x = static_cast<int>(w * 0.08f);
+        int icon_r = static_cast<int>(w * 0.03f);
+        int label_x = static_cast<int>(w * 0.17f);
+        int value_x = static_cast<int>(w * 0.92f);
         auto draw_row = [&](const char* icon_letter, const char* label, const char* value) {
           it.filled_circle(icon_x, row_y, icon_r, id(col_dark_teal));
           it.print(icon_x, row_y, id(font_tiny), id(col_teal), TextAlign::CENTER, icon_letter);
-          it.print(label_x, row_y, id(font_tiny), id(col_white), TextAlign::CENTER_LEFT, label);
-          it.print(value_x, row_y, id(font_tiny), id(col_teal), TextAlign::CENTER_RIGHT, value);
+          it.print(label_x, row_y, id(font_small), id(col_white), TextAlign::CENTER_LEFT, label);
+          it.print(value_x, row_y, id(font_small), id(col_teal), TextAlign::CENTER_RIGHT, value);
           row_y += row_spacing;
         };
 
@@ -794,7 +829,7 @@ display:
         snprintf(ahbuf2, sizeof(ahbuf2), "%.1fAh", consumed_ah);
         draw_row("Ah", "Consumed Ah", ahbuf2);
 
-        draw_row("T", "Time Remaining", time_part);
+        draw_row("T", "Time left", time_part);
       } else {
         // ----- Classic layout (unchanged) -----
         if (!soc_valid) {
@@ -835,12 +870,16 @@ display:
 
       // Charger status banner - shared across both display modes, since
       // it's specific to this project's charger-control feature rather
-      // than part of the app screen being mimicked.
+      // than part of the app screen being mimicked. Shorter + smaller
+      // font in App Style, where vertical space is already tight with
+      // five stat rows below the gauge; Classic keeps its original size.
+      int banner_h = app_style ? 26 : 40;
       Color bar_color = charging ? id(col_green) : id(col_grey);
-      it.filled_rectangle(0, it.get_height() - 40, it.get_width(), 40, bar_color);
+      it.filled_rectangle(0, it.get_height() - banner_h, it.get_width(), banner_h, bar_color);
       char sbuf[48];
-      snprintf(sbuf, sizeof(sbuf), "CHARGER %s  (%s)",
+      snprintf(sbuf, sizeof(sbuf), "CHARGER %s (%s)",
                 charging_valid ? (charging ? "ON" : "OFF") : "?",
                 mode.c_str());
-      it.print(it.get_width() / 2, it.get_height() - 20, id(font_small_bold),
+      it.print(it.get_width() / 2, it.get_height() - banner_h / 2,
+                app_style ? id(font_tiny) : id(font_small_bold),
                 id(col_black), TextAlign::CENTER, sbuf);
