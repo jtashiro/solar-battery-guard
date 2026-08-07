@@ -163,6 +163,59 @@ automation:
         target:
           entity_id: light.solar_battery_guard_backlight
 
+  - id: "solar_battery_guard_auto_calibrate_on_renogy_full"
+    alias: "Solar Battery Guard - Auto-Calibrate on Renogy Full"
+    description: >
+      Recalibrates the guard's coulomb-counted SoC to 100% using Renogy's
+      independent battery percentage / charging status as the trigger -
+      deliberately does NOT check the guard's own SoC first, since the
+      scenario this exists to fix is exactly when the guard's SoC has
+      already drifted away from 100% while the battery is genuinely full.
+      Runs alongside (not instead of) the on-device voltage/tail-current
+      heuristic (Battery At Float) - either path can trigger calibration.
+
+      Polls every 5 minutes and checks last_changed directly, rather than
+      using a state-change-driven `for:` trigger - a `for:` duration on a
+      numeric_state/state trigger never completed in testing against this
+      sensor, most likely because it stops emitting state-changed events
+      once its value settles near 100% (nothing "transitions" to re-anchor
+      the for-timer). This polling approach doesn't depend on that.
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/5"
+    condition:
+      # Cooldown - without this, once the OR block below goes true it
+      # would keep re-firing every 5 minutes for as long as the battery
+      # sits at 100% (potentially hours), repeatedly re-pulsing the
+      # calibration switch. Harmless (recalibrating to already-100% is a
+      # no-op) but noisy - skip if it already fired within the last hour.
+      - condition: template
+        value_template: >
+          {{ (now() - states.switch.solar_battery_guard_set_charged_state_calibrate_100.last_changed).total_seconds() >= 3600 }}
+      - condition: or
+        conditions:
+          - condition: and
+            conditions:
+              - condition: state
+                entity_id: sensor.renogy_controller_renogy_charging_status
+                state: "floating"
+              - condition: template
+                value_template: >
+                  {{ (now() - states.sensor.renogy_controller_renogy_charging_status.last_changed).total_seconds() >= 900 }}
+          - condition: and
+            conditions:
+              - condition: numeric_state
+                entity_id: sensor.renogy_controller_renogy_battery_percentage
+                above: 99
+              - condition: template
+                value_template: >
+                  {{ (now() - states.sensor.renogy_controller_renogy_battery_percentage.last_changed).total_seconds() >= 900 }}
+    action:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.solar_battery_guard_set_charged_state_calibrate_100
+
   - id: "solar_battery_guard_backlight_on_sunrise"
     alias: "Solar Battery Guard - Backlight On (Sunrise)"
     mode: single

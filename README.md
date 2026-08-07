@@ -15,7 +15,7 @@ monitor + AC charger controller for a solar battery bank:
 ## Architecture
 
 ```
-TBD-SmartShunt --UART(TX/GND, ~3.3V)--> ESP32 CYD --WiFi(ESPHome API)--> Home Assistant --> Kasa/Tuya/Wemo plug --> AC charger
+TBD-SmartShunt --UART(TX only, ~3.3V)--> ESP32 CYD --WiFi(ESPHome API)--> Home Assistant --> Kasa/Tuya/Wemo plug --> AC charger
                                           |
                                      ILI9341 display
 ```
@@ -165,12 +165,36 @@ assumed 5V logic based on a mislabeled reference.
 | Shunt pin | ESP32 CYD pin | Notes |
 |---|---|---|
 | Pin 2 (TX) | **IO35** on the small expansion header - **direct connection** | No divider needed, confirmed ~3.38V. This is NOT the board's dedicated "UART" JST port - see the warning above. |
-| Pin 4 (GND) | Any GND pin | Common ground |
+| Pin 4 (GND) | **do not connect** | See "Only one wire is needed" below - a direct GND connection here caused bad readings, not fixed them. |
 | Pin 1 (Power) | **do not connect** | The CYD has its own separate 5V supply (see Power below) - don't cross-connect |
 | Pin 3 (RX) | **do not connect** | The ESP32 never needs to send data to the shunt |
 
 The ESP32 never transmits to the shunt, so no `tx_pin` is configured - the
 `uart:` block only sets `rx_pin: GPIO35`.
+
+### Only one wire is needed - don't connect GND between the two devices
+
+Earlier drafts of this doc (and earlier revisions of the physical wiring)
+ran a ground wire between the shunt's Pin 4 and the CYD, on the
+reasonable-sounding assumption that a UART link needs a shared ground
+reference. **This turned out to be actively wrong, not just unnecessary:**
+that GND wire was the cause of incorrect power readings, confirmed by
+directly comparing against the FE-Shunt app's own readings one evening.
+Removing it - leaving **only the single TX-to-IO35 wire connected,
+nothing else, not even ground** - immediately produced clean, accurate
+data matching the app.
+
+The likely explanation is a ground loop: both devices already share a
+common reference through the battery bank itself (the shunt is wired
+in-line on the negative terminal, and the CYD's separate 5V supply's
+ground ultimately traces back to the same DC system) - adding a second,
+direct ground path between them created a loop that induced noise onto
+the UART signal. If you're wiring this project fresh, connect **IO35
+only** - do not add a ground wire even though it seems like the more
+"correct" way to wire a UART link. If you already have a project with
+both wires connected and are seeing occasionally-wrong or noisy
+voltage/current readings, removing the ground wire is worth trying
+before suspecting the shunt hardware or the ESPHome component itself.
 
 **Baud rate:** confirmed working at 115200 (the config default) once wired
 to the correct pin - real data flows immediately. If you ever need to
