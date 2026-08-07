@@ -1,0 +1,103 @@
+# Home Assistant automation package for the Solar Battery Monitor's
+# backlight schedule.
+#
+# Requires `homeassistant:` -> `packages:` to be enabled in configuration.yaml
+# (see solar_battery_guard.yaml in this same folder for the setup snippet),
+# or paste this file's contents into configuration.yaml directly.
+#
+# BEFORE USE:
+#   1. Confirm light.solar_battery_monitor_backlight is the actual entity ID
+#      in your instance - this project has hit entity-registry naming
+#      collisions before (see README) that produced an unexpected prefix
+#      on at least one entity, so don't assume the clean name is correct
+#      without checking Developer Tools -> States first.
+#   2. Set input_select.solar_battery_monitor_backlight_schedule_mode to
+#      whichever of "Fixed Times" / "Sunset/Sunrise" you want active - only
+#      the matching pair of automations below actually fires; the other
+#      pair's triggers still fire on schedule but their condition blocks
+#      them from doing anything.
+#   3. Adjust the default off/on times below (22:00 / 07:00) to taste via
+#      input_datetime.solar_battery_monitor_backlight_off_time and
+#      ..._on_time, either here or live in Home Assistant's UI afterward.
+
+input_select:
+  solar_battery_monitor_backlight_schedule_mode:
+    name: "Backlight Schedule Mode"
+    icon: mdi:theme-light-dark
+    options:
+      - "Fixed Times"
+      - "Sunset/Sunrise"
+    initial: "Fixed Times"
+
+input_datetime:
+  solar_battery_monitor_backlight_off_time:
+    name: "Backlight Off Time"
+    has_time: true
+    has_date: false
+    initial: "22:00:00"
+  solar_battery_monitor_backlight_on_time:
+    name: "Backlight On Time"
+    has_time: true
+    has_date: false
+    initial: "07:00:00"
+
+automation:
+  - id: "solar_battery_monitor_backlight_off_fixed"
+    alias: "Solar Battery Monitor - Backlight Off (Fixed Time)"
+    mode: single
+    trigger:
+      - platform: time
+        at: input_datetime.solar_battery_monitor_backlight_off_time
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_monitor_backlight_schedule_mode
+        state: "Fixed Times"
+    action:
+      - service: light.turn_off
+        target:
+          entity_id: light.solar_battery_monitor_backlight
+
+  - id: "solar_battery_monitor_backlight_on_fixed"
+    alias: "Solar Battery Monitor - Backlight On (Fixed Time)"
+    mode: single
+    trigger:
+      - platform: time
+        at: input_datetime.solar_battery_monitor_backlight_on_time
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_monitor_backlight_schedule_mode
+        state: "Fixed Times"
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.solar_battery_monitor_backlight
+
+  - id: "solar_battery_monitor_backlight_off_sunset"
+    alias: "Solar Battery Monitor - Backlight Off (Sunset)"
+    mode: single
+    trigger:
+      - platform: sun
+        event: sunset
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_monitor_backlight_schedule_mode
+        state: "Sunset/Sunrise"
+    action:
+      - service: light.turn_off
+        target:
+          entity_id: light.solar_battery_monitor_backlight
+
+  - id: "solar_battery_monitor_backlight_on_sunrise"
+    alias: "Solar Battery Monitor - Backlight On (Sunrise)"
+    mode: single
+    trigger:
+      - platform: sun
+        event: sunrise
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_monitor_backlight_schedule_mode
+        state: "Sunset/Sunrise"
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.solar_battery_monitor_backlight
