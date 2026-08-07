@@ -1,4 +1,4 @@
-# solar-battery-guard
+# solar-battery-guard and monitor
 
 ESP32 "Cheap Yellow Display"-style board running ESPHome as a battery
 monitor + AC charger controller for a solar battery bank:
