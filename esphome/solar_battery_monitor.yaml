@@ -179,6 +179,16 @@ select:
     restore_value: true
     optimistic: true
 
+  - platform: template
+    id: display_mode
+    name: "Display Mode"
+    options:
+      - "Classic"
+      - "App Style"
+    initial_option: "Classic"
+    restore_value: true
+    optimistic: true
+
 sensor:
   - platform: wifi_signal
     name: "WiFi Signal"
@@ -518,6 +528,46 @@ spi:
     clk_pin: GPIO14
     mosi_pin: GPIO13
     miso_pin: GPIO12
+  - id: touch_spi
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+# ---------------------------------------------------------------------------
+# Touch: wired but never actually used/calibrated on this hardware before
+# now (see main solar-battery-guard.yaml's README - resistive touch was
+# left as a documented follow-up). Pins are per this board's confirmed
+# pin table (SCK/DIN/DOUT/CS/IRQ = 25/32/39/33/36) - separate bus from the
+# display's own SPI, not shared.
+#
+# Since the goal is just "any tap toggles the mode" rather than precise
+# on-screen button targeting, this deliberately skips per-unit position
+# calibration (full 0-4095 raw ADC range) and only cares THAT a touch was
+# detected, not where. If touches aren't registering reliably with these
+# generous defaults, that's the first thing to revisit.
+# ---------------------------------------------------------------------------
+touchscreen:
+  - platform: xpt2046
+    id: touch_screen
+    spi_id: touch_spi
+    cs_pin: GPIO33
+    interrupt_pin: GPIO36
+    update_interval: 50ms
+    calibration:
+      x_min: 0
+      x_max: 4095
+      y_min: 0
+      y_max: 4095
+    on_touch:
+      - lambda: |-
+          // Debounced - a single physical tap can otherwise register as
+          // multiple touch events while contact is held/bounces.
+          static uint32_t last_toggle = 0;
+          uint32_t now = millis();
+          if (now - last_toggle < 600) return;
+          last_toggle = now;
+          std::string next_mode = id(display_mode).state == "Classic" ? "App Style" : "Classic";
+          id(display_mode).make_call().set_option(next_mode).perform();
 
 output:
   - platform: ledc
@@ -544,6 +594,10 @@ color:
     hex: "F1C40F"
   - id: col_grey
     hex: "888888"
+  - id: col_teal
+    hex: "3FCFA8"
+  - id: col_dark_teal
+    hex: "1B4B44"
 
 font:
   - file: "gfonts://Roboto"
@@ -575,6 +629,16 @@ display:
     invert_colors: false
     update_interval: 1s
     lambda: |-
+      // App Style rotates the panel to portrait to better match the
+      // phone-app layout it mimics. This board's base orientation is
+      // already achieved via the static `transform: swap_xy` above (see
+      // README for why this exact board needs that) - stacking a runtime
+      // rotation on top of that is untested on this hardware and may need
+      // a different ROTATION value than 90 (try 270 if this comes out
+      // upside-down/mirrored rather than portrait-right-side-up).
+      bool app_style = id(display_mode).state == "App Style";
+      it.set_rotation(app_style ? display::DISPLAY_ROTATION_90_DEGREES : display::DISPLAY_ROTATION_0_DEGREES);
+
       it.fill(id(col_black));
 
       // Header
@@ -639,62 +703,139 @@ display:
           ? (id(battery_status_push).has_state() ? id(battery_status_push).state : "")
           : id(battery_status_g);
 
-      // Battery SoC (big number, center)
-      if (!soc_valid) {
-        it.print(it.get_width() / 2, 90, id(font_medium), id(col_grey),
-                  TextAlign::CENTER, "NO DATA");
-      } else {
-        Color soc_color = id(col_green);
-        if (soc <= soc_on_th) {
-          soc_color = id(col_red);
-        } else if (soc < soc_off_th) {
-          soc_color = id(col_yellow);
-        }
-
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%.0f%%", soc);
-        it.print(it.get_width() / 2, 90, id(font_huge), soc_color,
-                  TextAlign::CENTER, buf);
-      }
-
-      // Voltage / current
-      char vbuf[24];
-      if (vc_valid) {
-        snprintf(vbuf, sizeof(vbuf), "%.2f V   %.2f A", voltage, current);
-      } else {
-        snprintf(vbuf, sizeof(vbuf), "-- V   -- A");
-      }
-      it.print(it.get_width() / 2, 150, id(font_medium), id(col_white),
-                TextAlign::CENTER, vbuf);
-
-      // Power / Consumed Ah / Time Remaining
-      char pbuf[48];
-      if (power_valid) {
-        char time_part[20];
-        if (time_left_valid) {
-          if (time_left >= 24.0f) {
-            int days = static_cast<int>(time_left / 24.0f);
-            int rem_hours = static_cast<int>(time_left) % 24;
-            snprintf(time_part, sizeof(time_part), "%dd %dh left", days, rem_hours);
-          } else {
-            snprintf(time_part, sizeof(time_part), "%.1fh left", time_left);
-          }
-        } else if (status_valid && status != "Unknown") {
-          // Time Remaining is only meaningful while discharging - while
-          // charging/idle it's legitimately unavailable, so show the
-          // actual reason (from Battery Status) instead of a bare "--".
-          snprintf(time_part, sizeof(time_part), "%s", status.c_str());
+      // Shared "time remaining" text, used by both display modes - only
+      // meaningful while discharging; while charging/idle, shows the
+      // Battery Status reason (Charging/Idle/etc.) instead of a bare "--".
+      char time_part[24];
+      if (time_left_valid) {
+        if (time_left >= 24.0f) {
+          int days = static_cast<int>(time_left / 24.0f);
+          int rem_hours = static_cast<int>(time_left) % 24;
+          snprintf(time_part, sizeof(time_part), "%dd %dh left", days, rem_hours);
         } else {
-          snprintf(time_part, sizeof(time_part), "--h left");
+          snprintf(time_part, sizeof(time_part), "%.1fh left", time_left);
         }
-        snprintf(pbuf, sizeof(pbuf), "%.0fW  %.1fAh  %s", power, consumed_ah, time_part);
+      } else if (status_valid && status != "Unknown") {
+        snprintf(time_part, sizeof(time_part), "%s", status.c_str());
       } else {
-        snprintf(pbuf, sizeof(pbuf), "-- W  -- Ah  --h left");
+        snprintf(time_part, sizeof(time_part), "--h left");
       }
-      it.print(it.get_width() / 2, 178, id(font_small_bold), id(col_grey),
-                TextAlign::CENTER, pbuf);
 
-      // Charger status banner
+      if (app_style) {
+        // ----- App Style: approximates the Renogy app's home screen
+        // (circular SoC gauge + Output stat rows) using basic display
+        // primitives only - no gradients or vector icons available on
+        // this display. Positions are relative to it.get_width()/
+        // get_height() rather than hardcoded, since the actual canvas
+        // size after set_rotation() combines with this board's static
+        // swap_xy transform in a way that hasn't been verified on
+        // hardware yet - relative positioning stays correct regardless
+        // of what that combination actually produces. -----
+        int w = it.get_width();
+        int h = it.get_height();
+        int cx = w / 2;
+        int cy = static_cast<int>(h * 0.28f);
+        float r_outer = std::min(w, h) * 0.30f;
+        float r_inner = r_outer * 0.78f;
+        Color gauge_color = id(col_green);
+        if (soc_valid) {
+          if (soc <= soc_on_th) gauge_color = id(col_red);
+          else if (soc < soc_off_th) gauge_color = id(col_yellow);
+        }
+        for (int deg = 0; deg < 360; deg += 2) {
+          float a = (deg - 90) * 3.14159265f / 180.0f;
+          float cos_a = cos(a), sin_a = sin(a);
+          int x1 = cx + static_cast<int>(r_inner * cos_a);
+          int y1 = cy + static_cast<int>(r_inner * sin_a);
+          int x2 = cx + static_cast<int>(r_outer * cos_a);
+          int y2 = cy + static_cast<int>(r_outer * sin_a);
+          bool filled = soc_valid && (deg < (360.0f * soc / 100.0f));
+          it.line(x1, y1, x2, y2, filled ? gauge_color : id(col_dark_teal));
+        }
+        if (soc_valid) {
+          char sbuf2[8];
+          snprintf(sbuf2, sizeof(sbuf2), "%.0f%%", soc);
+          it.print(cx, cy, id(font_medium), id(col_white), TextAlign::CENTER, sbuf2);
+        } else {
+          it.print(cx, cy, id(font_tiny), id(col_grey), TextAlign::CENTER, "NO DATA");
+        }
+
+        // Rows stack below the gauge (portrait-style, matching the app's
+        // layout) rather than beside it - correct regardless of whether
+        // the rotated canvas ends up wide or tall, since it's all
+        // relative to w/h rather than assuming a particular orientation.
+        int row_spacing = static_cast<int>(h * 0.085f);
+        int row_y = cy + static_cast<int>(r_outer) + row_spacing;
+        int icon_x = static_cast<int>(w * 0.12f);
+        int icon_r = static_cast<int>(w * 0.055f);
+        int label_x = static_cast<int>(w * 0.24f);
+        int value_x = static_cast<int>(w * 0.90f);
+        auto draw_row = [&](const char* icon_letter, const char* label, const char* value) {
+          it.filled_circle(icon_x, row_y, icon_r, id(col_dark_teal));
+          it.print(icon_x, row_y, id(font_tiny), id(col_teal), TextAlign::CENTER, icon_letter);
+          it.print(label_x, row_y, id(font_tiny), id(col_white), TextAlign::CENTER_LEFT, label);
+          it.print(value_x, row_y, id(font_tiny), id(col_teal), TextAlign::CENTER_RIGHT, value);
+          row_y += row_spacing;
+        };
+
+        char vbuf2[16];
+        if (vc_valid) snprintf(vbuf2, sizeof(vbuf2), "%.2fV", voltage); else snprintf(vbuf2, sizeof(vbuf2), "--");
+        draw_row("V", "Voltage", vbuf2);
+
+        char cbuf2[16];
+        if (vc_valid) snprintf(cbuf2, sizeof(cbuf2), "%.1fA", current); else snprintf(cbuf2, sizeof(cbuf2), "--");
+        draw_row("A", "Current", cbuf2);
+
+        char pbuf2[16];
+        if (power_valid) snprintf(pbuf2, sizeof(pbuf2), "%.0fW", power); else snprintf(pbuf2, sizeof(pbuf2), "--");
+        draw_row("W", "Power", pbuf2);
+
+        char ahbuf2[16];
+        snprintf(ahbuf2, sizeof(ahbuf2), "%.1fAh", consumed_ah);
+        draw_row("Ah", "Consumed Ah", ahbuf2);
+
+        draw_row("T", "Time Remaining", time_part);
+      } else {
+        // ----- Classic layout (unchanged) -----
+        if (!soc_valid) {
+          it.print(it.get_width() / 2, 90, id(font_medium), id(col_grey),
+                    TextAlign::CENTER, "NO DATA");
+        } else {
+          Color soc_color = id(col_green);
+          if (soc <= soc_on_th) {
+            soc_color = id(col_red);
+          } else if (soc < soc_off_th) {
+            soc_color = id(col_yellow);
+          }
+
+          char buf[16];
+          snprintf(buf, sizeof(buf), "%.0f%%", soc);
+          it.print(it.get_width() / 2, 90, id(font_huge), soc_color,
+                    TextAlign::CENTER, buf);
+        }
+
+        char vbuf[24];
+        if (vc_valid) {
+          snprintf(vbuf, sizeof(vbuf), "%.2f V   %.2f A", voltage, current);
+        } else {
+          snprintf(vbuf, sizeof(vbuf), "-- V   -- A");
+        }
+        it.print(it.get_width() / 2, 150, id(font_medium), id(col_white),
+                  TextAlign::CENTER, vbuf);
+
+        char pbuf[48];
+        if (power_valid) {
+          snprintf(pbuf, sizeof(pbuf), "%.0fW  %.1fAh  %s", power, consumed_ah, time_part);
+        } else {
+          snprintf(pbuf, sizeof(pbuf), "-- W  -- Ah  --h left");
+        }
+        it.print(it.get_width() / 2, 178, id(font_small_bold), id(col_grey),
+                  TextAlign::CENTER, pbuf);
+      }
+
+      // Charger status banner - shared across both display modes, since
+      // it's specific to this project's charger-control feature rather
+      // than part of the app screen being mimicked.
       Color bar_color = charging ? id(col_green) : id(col_grey);
       it.filled_rectangle(0, it.get_height() - 40, it.get_width(), 40, bar_color);
       char sbuf[48];
