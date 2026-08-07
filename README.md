@@ -48,6 +48,33 @@ The `webbbn/esphome-tbd-smartshunt` component this project uses was
 specifically reverse-engineered against this UART port for this exact
 device (not a generic/borrowed protocol from another shunt brand).
 
+### Why there's no on-device Bluetooth proxy
+
+A Renogy solar charge controller (separate from the battery shunt this
+project already reads) needs a BLE connection to pull its data into
+Home Assistant. Adding ESPHome's `bluetooth_proxy:` directly to
+`solar-battery-guard` was tried first, since it would avoid needing
+separate Bluetooth hardware - but it crash-loops this exact board: the
+base ESP32 (no PSRAM, 320KB SRAM) already runs WiFi + this display +
+UART sensor polling, and the BLE controller's own initialization can't
+get enough contiguous heap alongside all of that. The bootloader's OTA
+rollback protection silently reverts to the last-known-good firmware
+every time this happens, which looks like "nothing happened" rather
+than an obvious failure - worth knowing if a config change ever
+apparently doesn't take effect after a successful-looking OTA upload:
+check for an `OTA rollback detected` line in the boot log before
+assuming the flash itself failed.
+
+Trimming the proxy's settings (`connection_slots`, `cache_services`)
+didn't help, since the crash happens in the BLE controller's own
+bring-up, before any of ESPHome's own components even run - not a
+tunable-parameter problem. The working solution instead is a normal USB
+Bluetooth adapter (confirmed BLE-capable - explicitly rated Bluetooth
+4.0+, e.g. TP-Link UB500) plugged into whichever machine runs Home
+Assistant, using its own `bluetooth:` integration plus a
+Renogy-specific HACS integration - no ESP32 involved in the Bluetooth
+path at all.
+
 ## Hardware
 
 - **LCDWIKI ESP32-32E, model E32R28T** (2.8", ILI9341, 240x320, resistive
@@ -201,6 +228,39 @@ voltage/current on the display:
 SoC will drift over days/weeks like any coulomb counter - repeat step 2 or 3
 occasionally (e.g. whenever the bank naturally hits full) to re-anchor it.
 
+### Auto-calibrating on full charge
+
+Manually pressing **Set Charged State** every time the bank reaches full
+is easy to forget, and each missed cycle lets SoC drift further from
+reality. The device can also detect this itself: once **Battery
+Voltage** has been at/above **Auto-Calibrate Voltage Threshold**
+(default 13.6V - tune this to your charge controller's actual
+float/absorption-complete voltage, e.g. via its app or LCD) AND
+**Battery Current** has tapered to at/below **Auto-Calibrate Tail
+Current Threshold** (default 1.0A), continuously for 15 minutes, it
+automatically performs the same recalibration as pressing **Set
+Charged State** manually.
+
+The 15-minute sustained requirement (not just an instantaneous reading)
+exists specifically so a cloud passing over the panels mid-charge - a
+brief current dip that momentarily looks "tapered" - can't falsely
+trigger a recalibration; the underlying **Battery At Float** diagnostic
+binary sensor only turns on after the condition holds continuously, and
+resets its timer immediately if voltage/current drop back out of range.
+
+Caveat: **Battery Current** is measured at the shunt on the battery's
+negative terminal, so it reads *net* current (charging in minus
+whatever DC loads are drawn directly off the battery bus), not the
+charge controller's own charge current in isolation. If your loads
+aren't routed through the controller's own load terminal, net current
+during float may never actually drop below the tail threshold even once
+the battery is genuinely full - watch **Battery At Float** during a
+real charge cycle and raise the tail current threshold if it never
+trips.
+
+Disable entirely via **Auto-Calibrate On Full Charge** (defaults on) if
+it ever misbehaves - falls back to purely manual calibration.
+
 ### Power, Consumed Ah, and Time Remaining
 
 The TBD-SmartShunt only reports raw voltage and current over UART - it
@@ -221,9 +281,15 @@ versions of all three, exposed as regular sensors:
   present discharge rate. Only meaningful while actively discharging;
   reads unavailable while charging, idle, or before SoC is calibrated,
   since "time until empty" isn't a sensible number in those states.
+- **Battery Status** (text) - "Charging" / "Discharging" / "Idle", or
+  "Unknown" if the shunt isn't reporting. Exists because Time Remaining
+  is intentionally unavailable in the charging/idle cases above, so this
+  fills in *why* rather than leaving a bare unknown - both devices'
+  screens show it in place of "--h left" whenever Time Remaining itself
+  isn't available.
 
-All three are also shown on-screen on both devices (a compact line below
-the voltage/current readout, e.g. "-109W  -0.1Ah  70.3h left"). The
+All four are also shown on-screen on both devices (a compact line below
+the voltage/current readout, e.g. "-109W  -0.1Ah  Discharging"). The
 monitor viewer pulls them the same way it pulls everything else - via
 whichever mechanism `select.solar_battery_monitor_data_source` currently
 has selected.
@@ -242,6 +308,58 @@ A `select.solar_battery_guard_charger_mode` entity (Auto / Force ON / Force
 OFF) overrides the automatic logic - useful for manual testing or forcing a
 charge before bad weather.
 
+## Backlight scheduling
+
+Both devices' backlights can be scheduled off overnight and back on in
+the morning, via Home Assistant automations (not on-device logic - see
+[homeassistant/solar_battery_guard.yaml](homeassistant/solar_battery_guard.yaml)
+and [homeassistant/solar_battery_monitor.yaml](homeassistant/solar_battery_monitor.yaml);
+each device gets its own independent schedule). Two modes, selectable
+live per device:
+
+- **Fixed Times** - two `input_datetime` helpers (default 22:00 off /
+  07:00 on), editable anytime from Home Assistant without touching YAML.
+- **Sunset/Sunrise** - follows Home Assistant's `sun` integration
+  instead of fixed clock times.
+
+An `input_select` helper per device (`Guard Backlight Schedule Mode` /
+`Backlight Schedule Mode`) picks which mode is active; both pairs of
+automations are always present and trigger on schedule regardless, but
+each pair's `condition` blocks it from doing anything unless its mode is
+the one currently selected.
+
+This lives in Home Assistant rather than on-device deliberately - the
+backlight light entity already exists and is directly controllable, so
+scheduling it there means changes take effect without a reflash, same
+reasoning as the charger control logic above.
+
+## Touch controls
+
+Both devices' resistive touch controllers (wired but unused until now -
+see the pin table above) are active, using an XPT2046 touchscreen
+component on a separate SPI bus from the display (SCK/DIN/DOUT/CS/IRQ =
+GPIO25/32/39/33/36, per the pin table above - not the display's own SPI
+pins).
+
+**Deliberately skips per-unit position calibration.** The usual
+resistive-touch bring-up involves tapping each corner and recording raw
+ADC values to map them to screen pixels - tedious, and per-unit (every
+physical panel needs its own numbers). Since neither device needs to
+know *where* on the screen was tapped, just *that* a tap happened, both
+use the full 0-4095 raw ADC range as a generous default and only react
+to the touch event itself. A future feature needing actual tap-zone
+detection (e.g. on-screen buttons) would need that position calibration
+step then - it's skipped here only because nothing yet requires it.
+
+- **solar-battery-guard**: tap anywhere toggles the backlight on/off
+  directly, independent of the backlight schedule above.
+- **solar-battery-monitor**: tap anywhere toggles between Classic and
+  App Style display modes (see below).
+
+Both are debounced (600ms) in firmware, since a single physical tap can
+otherwise register as multiple touch events while contact is held or
+bounces.
+
 ## Home Assistant setup
 
 1. Add the ESPHome device in Home Assistant as usual (Settings -> Devices &
@@ -252,10 +370,32 @@ charge before bad weather.
 3. Include the file as a package (see the comment at the top of that file)
    or paste its `automation:` block into your existing automations.
 
-This gives you three automations: the core charger control mirror, a
-desync alert if the plug doesn't respond to a command within 2 minutes, and
-a critical-low-SoC notification as a backstop in case the charger itself
-has failed.
+This gives you three core automations (charger control mirror, a desync
+alert if the plug doesn't respond within 2 minutes, and a
+critical-low-SoC notification as a backstop) plus four backlight-schedule
+automations - see [Backlight scheduling](#backlight-scheduling) above for
+those. All send their alerts via `notify.notify`, so make sure you have a
+notify target configured in Home Assistant (mobile app notifications,
+etc.) or redirect that service call to whatever you actually use.
+
+### Packages include-tag gotcha
+
+If you're using `homeassistant: packages:` to load these files (rather
+than pasting their contents directly into `automations.yaml`/
+`configuration.yaml`), the include tag matters: use
+`!include_dir_named packages`, not `!include_dir_merge_named packages`.
+The merge variant flattens every file's top-level keys (`automation:`,
+`input_select:`, etc.) into one shared dict *across every file in the
+folder*, rather than keying each file's content by its own filename -
+which breaks package loading in a way that produces genuinely confusing
+errors, e.g. `Setup of package 'input_select' failed: Integration
+'<your_entity_name>' not found` (Home Assistant ends up trying to
+interpret your entity's object_id as if it were a domain/integration
+name). If you see errors shaped like that, check this tag before
+suspecting the package file's own content - it can also silently break
+*other*, unrelated packages already in the same folder once you add a
+package file with multiple top-level keys, since it's the folder's
+merge behavior that's wrong, not any individual file.
 
 ### Entity ID gotcha
 
@@ -276,6 +416,17 @@ fix is a manual rename: open the entity in Settings -> Devices & Services
 ID field to the expected clean value (you may need to enable "Advanced
 Mode" in your HA profile to see that field).
 
+A related but different manifestation of this same underlying issue: a
+brand-new entity's ID can also come out prefixed with something
+unexpected entirely (e.g. an Area name, like
+`sensor.si_mining_shed_solar_battery_guard_battery_status`) rather than
+doubled - also caused by a stale/orphaned registry entry colliding with
+the clean name you'd expect. Same fix applies: check Developer Tools ->
+States for the actual entity_id rather than assuming it matches the
+device+entity name pattern, especially right after adding a new entity
+to an already-established device - don't trust automations/polling URLs
+you wrote against the assumed clean name until you've verified it.
+
 ## Safety notes
 
 - This automates a mains AC charger. Keep normal electrical safety practice
@@ -294,13 +445,17 @@ Mode" in your HA profile to see that field).
 
 ## Possible next steps
 
-- Touchscreen on-device controls for the Auto/Force ON/Force OFF modes
-  (the resistive touch controller is wired but not yet used in the
-  config - needs per-unit touch calibration, so it's left for a follow-up
-  once the base monitor is confirmed working).
+- Touch-driven charger mode cycling (Auto/Force ON/Force OFF) - the
+  resistive touch controller itself is now confirmed working (see
+  [Touch controls](#touch-controls) above, currently used only for
+  backlight toggling), so this is now just a matter of adding tap-zone
+  detection for this specific action, not a hardware bring-up problem
+  anymore.
 - Push notifications via the ESPHome device itself (e.g. a piezo/speaker
   alert, since the CYD has one wired to GPIO26) for critical-low SoC,
-  independent of Home Assistant being reachable.
+  independent of Home Assistant being reachable - distinct from the
+  `notify.notify` Home Assistant alerts already in place (see Home
+  Assistant setup above), which depend on HA being reachable.
 
 ## Second device: display-only viewer (`solar_battery_monitor.yaml`)
 
@@ -378,3 +533,28 @@ how much debugging time the silent-failure mode cost on this project, that
 observability difference matters more than which one is marginally more
 efficient. HTTP requests are automatically skipped while "Push
 Subscription" is selected, so there's no wasted API load either way.
+
+### Display modes: Classic / App Style
+
+The monitor supports two on-screen layouts, toggleable live via
+`select.solar_battery_monitor_display_mode` in Home Assistant or by
+[tapping the screen](#touch-controls):
+
+- **Classic** - the original landscape layout (big SoC%, voltage/current,
+  power/Ah/time line, charger status banner).
+- **App Style** - approximates the Renogy phone app's home screen (a
+  circular SoC gauge with Battery Status shown underneath, stacked
+  Voltage/Current/Power/Consumed Ah/Time Left rows with simple
+  lettered-circle icons), built entirely from ESPHome's basic drawing
+  primitives - no gradients or vector icons available on this display,
+  so it's an approximation of the app's look, not a pixel-perfect copy.
+
+App Style rotates the physical panel to portrait
+(`it.set_rotation(DISPLAY_ROTATION_90_DEGREES)`) on top of this board's
+existing static `swap_xy` transform (see
+[Board identification](#board-identification-important) above) -
+confirmed working on this hardware, though the exact rotation value
+needed (90° vs 180°/270°) was found by testing on the physical unit
+rather than derived from the two transforms' theoretical combination.
+Treat that value as board-specific-verified rather than portable to a
+different panel/wiring without re-checking on real hardware.
