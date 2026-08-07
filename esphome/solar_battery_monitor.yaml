@@ -1,0 +1,664 @@
+# ---------------------------------------------------------------------------
+# Solar Battery Monitor - a SEPARATE ESP32 CYD board (same LCDWIKI
+# ESP32-32E/E32R28T hardware as the main solar-battery-guard unit) that
+# acts as a pure display-only viewer. It has no shunt wired to it and does
+# not control the charger - it just pulls the already-computed battery
+# status live from Home Assistant and shows it on screen.
+#
+# Data source: this polls Home Assistant's REST API directly on a timer
+# (see the `interval:` block below), rather than using ESPHome's
+# `platform: homeassistant` push-subscription mechanism. That mechanism
+# was tried first but proved unreliable in practice - it depends on Home
+# Assistant proactively sending a specific subscription-request message
+# that, for reasons not fully pinned down, wasn't reliably happening in
+# this setup, and separately, ESPHome's homeassistant sensor platform is
+# documented to not forward unchanged values even when force_update is
+# set (esphome/esphome#13351). Polling sidesteps both problems with a
+# plain, predictable request/response cycle.
+#
+# Requires the main solar-battery-guard device to already be set up and
+# its entities present in Home Assistant, since every value shown here is
+# read from that device's entities.
+# ---------------------------------------------------------------------------
+substitutions:
+  name: solar-battery-monitor
+  friendly_name: "Solar Battery Monitor"
+  ha_url: !secret ha_base_url
+  ha_token: !secret ha_long_lived_token
+  poll_interval: 10s
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  comment: "ESP32 CYD - read-only battery status viewer (polls Home Assistant REST API)"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret monitor_api_encryption_key
+
+ota:
+  platform: esphome
+  password: !secret monitor_ota_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+improv_serial:
+
+http_request:
+  id: ha_http
+  useragent: solar-battery-monitor
+  timeout: 5s
+
+# ---------------------------------------------------------------------------
+# Live values, updated by the polling block further down. Storing these as
+# plain globals (rather than sensor/binary_sensor/text_sensor entities)
+# since nothing here needs to be re-exposed as a new Home Assistant entity
+# - the display lambda reads them directly.
+# ---------------------------------------------------------------------------
+globals:
+  - id: battery_soc_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: battery_soc_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: battery_voltage_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: battery_current_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: battery_vc_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: soc_turn_on_g
+    type: float
+    restore_value: no
+    initial_value: '30'
+  - id: soc_turn_off_g
+    type: float
+    restore_value: no
+    initial_value: '90'
+  - id: charger_should_run_g
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: charger_should_run_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: charger_mode_g
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: battery_power_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: battery_power_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: consumed_ah_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: time_remaining_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: time_remaining_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  # Tracks when data was last actually received from Home Assistant (not
+  # just when the display last redrew) - a stuck timestamp here means
+  # polling has stopped succeeding, e.g. wifi/HA/token trouble.
+  - id: last_update_hour
+    type: int
+    restore_value: no
+    initial_value: '-1'
+  - id: last_update_minute
+    type: int
+    restore_value: no
+    initial_value: '-1'
+  - id: last_update_second
+    type: int
+    restore_value: no
+    initial_value: '-1'
+
+# ---------------------------------------------------------------------------
+# Lets you switch, live from Home Assistant, between the two data-sourcing
+# mechanisms this device supports - useful for comparing them directly now
+# that the push-subscription mechanism's original failure is understood to
+# have likely been mostly a wrong-entity-name issue (see README) rather
+# than a deeper protocol problem. HTTP polling remains the default since
+# its failures are loud (an explicit 404 in the log) where the push
+# mechanism's are silent.
+# ---------------------------------------------------------------------------
+select:
+  - platform: template
+    id: data_source_mode
+    name: "Data Source"
+    options:
+      - "HTTP Polling"
+      - "Push Subscription"
+    initial_option: "Push Subscription"
+    restore_value: true
+    optimistic: true
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  # --- Push-subscription mechanism, running in parallel to HTTP polling.
+  # internal: true since these are only read locally by the display
+  # lambda, not meant to be re-exposed as new Home Assistant entities. ---
+  - platform: homeassistant
+    id: battery_soc_push
+    entity_id: sensor.solar_battery_guard_battery_soc
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(data_source_mode).state == "Push Subscription") {
+              auto now = id(ha_time).now();
+              if (now.is_valid()) {
+                id(last_update_hour) = now.hour;
+                id(last_update_minute) = now.minute;
+                id(last_update_second) = now.second;
+              }
+            }
+
+  - platform: homeassistant
+    id: battery_voltage_push
+    entity_id: sensor.solar_battery_guard_battery_voltage
+    internal: true
+
+  - platform: homeassistant
+    id: battery_current_push
+    entity_id: sensor.solar_battery_guard_battery_current
+    internal: true
+
+  - platform: homeassistant
+    id: soc_turn_on_push
+    entity_id: number.solar_battery_guard_charger_turn_on_soc
+    internal: true
+
+  - platform: homeassistant
+    id: soc_turn_off_push
+    entity_id: number.solar_battery_guard_charger_turn_off_soc
+    internal: true
+
+  - platform: homeassistant
+    id: battery_power_push
+    entity_id: sensor.solar_battery_guard_battery_power
+    internal: true
+
+  - platform: homeassistant
+    id: consumed_ah_push
+    entity_id: sensor.solar_battery_guard_consumed_ah
+    internal: true
+
+  - platform: homeassistant
+    id: time_remaining_push
+    entity_id: sensor.solar_battery_guard_time_remaining
+    internal: true
+
+binary_sensor:
+  - platform: homeassistant
+    id: charger_should_run_push
+    entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+    internal: true
+
+text_sensor:
+  - platform: homeassistant
+    id: charger_mode_push
+    entity_id: select.solar_battery_guard_charger_mode
+    internal: true
+
+# ---------------------------------------------------------------------------
+# Polling: fetches each entity's current state from Home Assistant's REST
+# API (GET /api/states/<entity_id>) once per poll_interval, but only while
+# "Data Source" is set to HTTP Polling - skipped entirely in Push
+# Subscription mode to avoid pointless API load. If you renamed/re-paired
+# the main device and its entity IDs differ from these defaults, update
+# the URLs below to match.
+# ---------------------------------------------------------------------------
+interval:
+  - interval: ${poll_interval}
+    then:
+      - if:
+          condition:
+            lambda: 'return id(data_source_mode).state == "HTTP Polling";'
+          then:
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.solar_battery_guard_battery_soc"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(battery_soc_g) = *val;
+                          id(battery_soc_valid) = true;
+                          auto now = id(ha_time).now();
+                          if (now.is_valid()) {
+                            id(last_update_hour) = now.hour;
+                            id(last_update_minute) = now.minute;
+                            id(last_update_second) = now.second;
+                          }
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      id(battery_soc_valid) = false;
+                      ESP_LOGW("ha_poll", "Failed to fetch battery_soc");
+    
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.solar_battery_guard_battery_voltage"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(battery_voltage_g) = *val;
+                          id(battery_vc_valid) = true;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      id(battery_vc_valid) = false;
+                      ESP_LOGW("ha_poll", "Failed to fetch battery_voltage");
+    
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.solar_battery_guard_battery_current"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(battery_current_g) = *val;
+                        }
+                        return true;
+                      });
+    
+          - http_request.get:
+              url: "${ha_url}/api/states/number.solar_battery_guard_charger_turn_on_soc"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(soc_turn_on_g) = *val;
+                        }
+                        return true;
+                      });
+    
+          - http_request.get:
+              url: "${ha_url}/api/states/number.solar_battery_guard_charger_turn_off_soc"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(soc_turn_off_g) = *val;
+                        }
+                        return true;
+                      });
+    
+          - http_request.get:
+              url: "${ha_url}/api/states/binary_sensor.solar_battery_guard_ac_charger_should_run"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        id(charger_should_run_g) = (state == "on");
+                        id(charger_should_run_valid) = true;
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: id(charger_should_run_valid) = false;
+    
+          - http_request.get:
+              url: "${ha_url}/api/states/select.solar_battery_guard_charger_mode"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        id(charger_mode_g) = root["state"].as<std::string>();
+                        return true;
+                      });
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.solar_battery_guard_battery_power"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(battery_power_g) = *val;
+                          id(battery_power_valid) = true;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: id(battery_power_valid) = false;
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.solar_battery_guard_consumed_ah"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(consumed_ah_g) = *val;
+                        }
+                        return true;
+                      });
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.solar_battery_guard_time_remaining"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(time_remaining_g) = *val;
+                          id(time_remaining_valid) = true;
+                        } else {
+                          id(time_remaining_valid) = false;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: id(time_remaining_valid) = false;
+
+# ---------------------------------------------------------------------------
+# Display: identical hardware/pin config to the main solar-battery-guard
+# board (same LCDWIKI ESP32-32E/E32R28T) - reset_pin GPIO4, color_palette
+# 8BIT, and swap_xy transform are all required for this exact board's
+# ILI9341 panel to initialize correctly. See that project's README for
+# the full pin-mapping background if this ever needs to move to different
+# hardware.
+# ---------------------------------------------------------------------------
+spi:
+  - id: tft_spi
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Backlight"
+    id: back_light
+    restore_mode: ALWAYS_ON
+
+color:
+  - id: col_white
+    hex: "FFFFFF"
+  - id: col_black
+    hex: "000000"
+  - id: col_green
+    hex: "2ECC71"
+  - id: col_red
+    hex: "E74C3C"
+  - id: col_yellow
+    hex: "F1C40F"
+  - id: col_grey
+    hex: "888888"
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_huge
+    size: 56
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 24
+  - file: "gfonts://Roboto@700"
+    id: font_small_bold
+    size: 18
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 13
+
+display:
+  - platform: ili9xxx
+    model: ILI9341
+    spi_id: tft_spi
+    cs_pin: GPIO15
+    dc_pin: GPIO2
+    reset_pin: GPIO4
+    color_palette: 8BIT
+    dimensions:
+      width: 320
+      height: 240
+    transform:
+      swap_xy: true
+    invert_colors: false
+    update_interval: 1s
+    lambda: |-
+      it.fill(id(col_black));
+
+      // Header
+      it.print(10, 6, id(font_small_bold), id(col_grey), "SOLAR BATTERY MONITOR");
+
+      // Status line: current date/time (synced from Home Assistant)
+      auto now = id(ha_time).now();
+      char status_buf[24];
+      if (now.is_valid()) {
+        snprintf(status_buf, sizeof(status_buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                  now.year, now.month, now.day_of_month,
+                  now.hour, now.minute, now.second);
+      } else {
+        snprintf(status_buf, sizeof(status_buf), "----:--:-- --:--:--");
+      }
+      it.print(it.get_width() - 10, 6 + 18 + 6, id(font_tiny), id(col_grey),
+                TextAlign::TOP_RIGHT, status_buf);
+
+      // Pick which data source feeds the display, based on the "Data
+      // Source" select - normalizes both mechanisms to the same set of
+      // local variables so the drawing code below doesn't need to care
+      // which one is active.
+      bool use_push = id(data_source_mode).state == "Push Subscription";
+      const char* source_label = use_push ? "PUSH" : "HTTP";
+
+      // Last update: when data was last actually received successfully -
+      // a stuck timestamp here means the active source has stopped
+      // delivering data. Labeled with which source is currently active.
+      char last_update_buf[32];
+      if (id(last_update_hour) >= 0) {
+        snprintf(last_update_buf, sizeof(last_update_buf), "Updated %02d:%02d:%02d (%s)",
+                  id(last_update_hour), id(last_update_minute), id(last_update_second),
+                  source_label);
+      } else {
+        snprintf(last_update_buf, sizeof(last_update_buf), "Updated: never (%s)", source_label);
+      }
+      it.print(10, 6 + 18 + 6, id(font_tiny), id(col_grey),
+                TextAlign::TOP_LEFT, last_update_buf);
+
+      bool soc_valid = use_push ? !isnan(id(battery_soc_push).state) : id(battery_soc_valid);
+      float soc = use_push ? id(battery_soc_push).state : id(battery_soc_g);
+      float soc_on_th = (use_push && !isnan(id(soc_turn_on_push).state)) ? id(soc_turn_on_push).state : id(soc_turn_on_g);
+      float soc_off_th = (use_push && !isnan(id(soc_turn_off_push).state)) ? id(soc_turn_off_push).state : id(soc_turn_off_g);
+
+      bool vc_valid = use_push ? !isnan(id(battery_voltage_push).state) : id(battery_vc_valid);
+      float voltage = use_push ? id(battery_voltage_push).state : id(battery_voltage_g);
+      float current = use_push ? id(battery_current_push).state : id(battery_current_g);
+
+      bool charging_valid = use_push ? id(charger_should_run_push).has_state() : id(charger_should_run_valid);
+      bool charging = charging_valid && (use_push ? id(charger_should_run_push).state : id(charger_should_run_g));
+      std::string mode = use_push
+          ? (id(charger_mode_push).has_state() ? id(charger_mode_push).state : "?")
+          : (id(charger_mode_g).empty() ? "?" : id(charger_mode_g));
+
+      bool power_valid = use_push ? !isnan(id(battery_power_push).state) : id(battery_power_valid);
+      float power = use_push ? id(battery_power_push).state : id(battery_power_g);
+      float consumed_ah = use_push ? id(consumed_ah_push).state : id(consumed_ah_g);
+      bool time_left_valid = use_push ? !isnan(id(time_remaining_push).state) : id(time_remaining_valid);
+      float time_left = use_push ? id(time_remaining_push).state : id(time_remaining_g);
+
+      // Battery SoC (big number, center)
+      if (!soc_valid) {
+        it.print(it.get_width() / 2, 90, id(font_medium), id(col_grey),
+                  TextAlign::CENTER, "NO DATA");
+      } else {
+        Color soc_color = id(col_green);
+        if (soc <= soc_on_th) {
+          soc_color = id(col_red);
+        } else if (soc < soc_off_th) {
+          soc_color = id(col_yellow);
+        }
+
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.0f%%", soc);
+        it.print(it.get_width() / 2, 90, id(font_huge), soc_color,
+                  TextAlign::CENTER, buf);
+      }
+
+      // Voltage / current
+      char vbuf[24];
+      if (vc_valid) {
+        snprintf(vbuf, sizeof(vbuf), "%.2f V   %.2f A", voltage, current);
+      } else {
+        snprintf(vbuf, sizeof(vbuf), "-- V   -- A");
+      }
+      it.print(it.get_width() / 2, 150, id(font_medium), id(col_white),
+                TextAlign::CENTER, vbuf);
+
+      // Power / Consumed Ah / Time Remaining
+      char pbuf[48];
+      if (power_valid) {
+        char time_part[20];
+        if (time_left_valid) {
+          if (time_left >= 24.0f) {
+            int days = static_cast<int>(time_left / 24.0f);
+            int rem_hours = static_cast<int>(time_left) % 24;
+            snprintf(time_part, sizeof(time_part), "%dd %dh left", days, rem_hours);
+          } else {
+            snprintf(time_part, sizeof(time_part), "%.1fh left", time_left);
+          }
+        } else {
+          snprintf(time_part, sizeof(time_part), "--h left");
+        }
+        snprintf(pbuf, sizeof(pbuf), "%.0fW  %.1fAh  %s", power, consumed_ah, time_part);
+      } else {
+        snprintf(pbuf, sizeof(pbuf), "-- W  -- Ah  --h left");
+      }
+      it.print(it.get_width() / 2, 178, id(font_small_bold), id(col_grey),
+                TextAlign::CENTER, pbuf);
+
+      // Charger status banner
+      Color bar_color = charging ? id(col_green) : id(col_grey);
+      it.filled_rectangle(0, it.get_height() - 40, it.get_width(), 40, bar_color);
+      char sbuf[48];
+      snprintf(sbuf, sizeof(sbuf), "CHARGER %s  (%s)",
+                charging_valid ? (charging ? "ON" : "OFF") : "?",
+                mode.c_str());
+      it.print(it.get_width() / 2, it.get_height() - 20, id(font_small_bold),
+                id(col_black), TextAlign::CENTER, sbuf);

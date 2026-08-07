@@ -37,6 +37,20 @@ ota:
   platform: esphome
   password: !secret ota_password
 
+# ---------------------------------------------------------------------------
+# NOTE: bluetooth_proxy was tried here and reverted - this ESP32 (no PSRAM,
+# already running WiFi + ILI9341 display + UART sensing) crashes during the
+# BLE controller's own init before any of our components even run, and gets
+# silently reverted by the bootloader's OTA rollback protection every time
+# (confirmed via `esphome logs`: "OTA rollback detected! Rolled back from
+# partition" on every attempt, with or without trimmed connection_slots/
+# cache_services - so it's not a tunable-parameter problem, the base BT
+# controller can't get enough contiguous heap alongside everything else
+# already running here). Use a separate, dedicated ESP32 (nothing else on
+# it) for the Renogy BLE proxy instead - see the second-device pattern this
+# project already uses for solar_battery_monitor.yaml.
+# ---------------------------------------------------------------------------
+
 time:
   - platform: homeassistant
     id: ha_time
@@ -181,6 +195,35 @@ number:
     restore_value: true
     optimistic: true
 
+  # --- Auto-calibrate-on-full thresholds. Mirrors what the FE-Shunt app
+  # appears to do on its own: treat "voltage high + current tapered to
+  # near-zero, sustained" as true full charge and re-anchor SoC to 100%,
+  # instead of relying solely on the manual "Set Charged State" button.
+  # Defaults are a starting guess for a 4S LiFePO4 bank (12.8V nominal) -
+  # tune Voltage Threshold to match your charge controller's actual
+  # float/absorption-complete voltage. ---
+  - platform: template
+    id: full_charge_voltage_threshold
+    name: "Auto-Calibrate Voltage Threshold"
+    unit_of_measurement: "V"
+    min_value: 10.0
+    max_value: 15.0
+    step: 0.05
+    initial_value: "13.6"
+    restore_value: true
+    optimistic: true
+
+  - platform: template
+    id: full_charge_tail_current_threshold
+    name: "Auto-Calibrate Tail Current Threshold"
+    unit_of_measurement: "A"
+    min_value: 0.1
+    max_value: 10.0
+    step: 0.1
+    initial_value: "1.0"
+    restore_value: true
+    optimistic: true
+
 select:
   - platform: template
     id: charger_override_mode
@@ -241,6 +284,13 @@ switch:
           id: set_charged_sw
           state: OFF
     id: set_charged_sw
+
+  - platform: template
+    name: "Auto-Calibrate On Full Charge"
+    id: auto_calibrate_enabled
+    icon: "mdi:refresh-auto"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
 
   - platform: template
     name: "Set Discharged State (calibrate low point)"
@@ -357,6 +407,36 @@ sensor:
     lambda: return id(total_energy_out) / 1000.0;
 
 binary_sensor:
+  # Fires once (edge-triggered via on_press) when voltage has been at/above
+  # the threshold AND current tapered at/below the tail threshold,
+  # continuously, for 15 minutes straight - the `delayed_on` filter resets
+  # its timer any time the underlying condition goes false, so a cloud
+  # passing over the panels mid-charge (a brief current spike) won't
+  # falsely trigger a recalibration. Requires >= 0 current (charging or
+  # idle, not discharging) so a lightly-loaded-but-not-actually-full battery
+  # sitting near the voltage threshold on a cloudy day can't trigger it.
+  - platform: template
+    id: battery_at_float
+    name: "Battery At Float"
+    entity_category: diagnostic
+    lambda: |-
+      if (isnan(id(batt_voltage).state) || isnan(id(batt_current).state)) return {};
+      return id(batt_voltage).state >= id(full_charge_voltage_threshold).state
+          && id(batt_current).state >= 0.0f
+          && id(batt_current).state <= id(full_charge_tail_current_threshold).state;
+    filters:
+      - delayed_on: 15min
+    on_press:
+      then:
+        - if:
+            condition:
+              lambda: return id(auto_calibrate_enabled).state;
+            then:
+              - lambda: |-
+                  id(current_stored_energy) = id(capacity);
+                  id(consumed_ah) = 0.0;
+                  ESP_LOGI("auto_calibrate", "Auto-calibrated to 100%% - sustained float detected");
+
   - platform: template
     id: charger_should_run
     name: "AC Charger Should Run"
