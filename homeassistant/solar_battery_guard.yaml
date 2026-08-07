@@ -19,8 +19,30 @@
 #      default to slugified from "Solar Battery Guard" - check
 #      Settings -> Devices & Services -> ESPHome -> Solar Battery Guard.
 
+input_select:
+  solar_battery_guard_backlight_schedule_mode:
+    name: "Guard Backlight Schedule Mode"
+    icon: mdi:theme-light-dark
+    options:
+      - "Fixed Times"
+      - "Sunset/Sunrise"
+    initial: "Fixed Times"
+
+input_datetime:
+  solar_battery_guard_backlight_off_time:
+    name: "Guard Backlight Off Time"
+    has_time: true
+    has_date: false
+    initial: "22:00:00"
+  solar_battery_guard_backlight_on_time:
+    name: "Guard Backlight On Time"
+    has_time: true
+    has_date: false
+    initial: "07:00:00"
+
 automation:
-  - alias: "Solar Battery Guard - AC Charger Control"
+  - id: "solar_battery_guard_ac_charger_control"
+    alias: "Solar Battery Guard - AC Charger Control"
     description: >
       Mirrors the ESP32's computed charger_should_run decision (SoC
       threshold + hysteresis + manual override, all evaluated on-device) onto
@@ -54,7 +76,8 @@ automation:
                 target:
                   entity_id: switch.charger_and_fan_socket_2
 
-  - alias: "Solar Battery Guard - Charger Plug Desync Alert"
+  - id: "solar_battery_guard_charger_desync_alert"
+    alias: "Solar Battery Guard - Charger Plug Desync Alert"
     description: >
       Warns if the smart plug's actual state doesn't match what the guard
       commanded, 2 minutes after a command - catches an offline/unresponsive
@@ -79,7 +102,8 @@ automation:
             ({{ trigger.to_state.state }}). Check switch.charger_and_fan_socket_2 -
             it may be offline.
 
-  - alias: "Solar Battery Guard - Critical Low SoC Alert"
+  - id: "solar_battery_guard_critical_low_soc_alert"
+    alias: "Solar Battery Guard - Critical Low SoC Alert"
     description: "Notify if SoC keeps falling after the charger was told to turn on - the charger itself may not be working."
     mode: single
     trigger:
@@ -93,3 +117,63 @@ automation:
           message: >
             Battery SoC is {{ states('sensor.solar_battery_guard_battery_soc') }}%,
             below 15%. Verify the AC charger is actually running.
+
+  - id: "solar_battery_guard_backlight_off_fixed"
+    alias: "Solar Battery Guard - Backlight Off (Fixed Time)"
+    mode: single
+    trigger:
+      - platform: time
+        at: input_datetime.solar_battery_guard_backlight_off_time
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_guard_backlight_schedule_mode
+        state: "Fixed Times"
+    action:
+      - service: light.turn_off
+        target:
+          entity_id: light.solar_battery_guard_backlight
+
+  - id: "solar_battery_guard_backlight_on_fixed"
+    alias: "Solar Battery Guard - Backlight On (Fixed Time)"
+    mode: single
+    trigger:
+      - platform: time
+        at: input_datetime.solar_battery_guard_backlight_on_time
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_guard_backlight_schedule_mode
+        state: "Fixed Times"
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.solar_battery_guard_backlight
+
+  - id: "solar_battery_guard_backlight_off_sunset"
+    alias: "Solar Battery Guard - Backlight Off (Sunset)"
+    mode: single
+    trigger:
+      - platform: sun
+        event: sunset
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_guard_backlight_schedule_mode
+        state: "Sunset/Sunrise"
+    action:
+      - service: light.turn_off
+        target:
+          entity_id: light.solar_battery_guard_backlight
+
+  - id: "solar_battery_guard_backlight_on_sunrise"
+    alias: "Solar Battery Guard - Backlight On (Sunrise)"
+    mode: single
+    trigger:
+      - platform: sun
+        event: sunrise
+    condition:
+      - condition: state
+        entity_id: input_select.solar_battery_guard_backlight_schedule_mode
+        state: "Sunset/Sunrise"
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.solar_battery_guard_backlight

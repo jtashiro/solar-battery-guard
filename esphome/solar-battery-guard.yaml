@@ -476,6 +476,39 @@ spi:
     clk_pin: GPIO14
     mosi_pin: GPIO13
     miso_pin: GPIO12
+  - id: touch_spi
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+# ---------------------------------------------------------------------------
+# Touch: same controller/pins as solar_battery_monitor.yaml (confirmed
+# working there - see that file's comments for the full rationale). Only
+# used here to toggle the backlight on/off on tap - not for any charger
+# control or mode switching, so the same generous full-range calibration
+# (we only care THAT a touch happened, not where) is enough.
+# ---------------------------------------------------------------------------
+touchscreen:
+  - platform: xpt2046
+    id: touch_screen
+    spi_id: touch_spi
+    cs_pin: GPIO33
+    interrupt_pin: GPIO36
+    update_interval: 50ms
+    calibration:
+      x_min: 0
+      x_max: 4095
+      y_min: 0
+      y_max: 4095
+    on_touch:
+      - lambda: |-
+          // Debounced - a single physical tap can otherwise register as
+          // multiple touch events while contact is held/bounces.
+          static uint32_t last_toggle = 0;
+          uint32_t now = millis();
+          if (now - last_toggle < 600) return;
+          last_toggle = now;
+          id(back_light).toggle().perform();
 
 output:
   - platform: ledc
