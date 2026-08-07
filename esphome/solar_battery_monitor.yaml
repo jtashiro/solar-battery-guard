@@ -135,6 +135,14 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  - id: battery_status_g
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: battery_status_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
   # Tracks when data was last actually received from Home Assistant (not
   # just when the display last redrew) - a stuck timestamp here means
   # polling has stopped succeeding, e.g. wifi/HA/token trouble.
@@ -241,6 +249,11 @@ text_sensor:
   - platform: homeassistant
     id: charger_mode_push
     entity_id: select.solar_battery_guard_charger_mode
+    internal: true
+
+  - platform: homeassistant
+    id: battery_status_push
+    entity_id: sensor.si_mining_shed_solar_battery_guard_battery_status
     internal: true
 
 # ---------------------------------------------------------------------------
@@ -473,6 +486,25 @@ interval:
                 then:
                   - lambda: id(time_remaining_valid) = false;
 
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.si_mining_shed_solar_battery_guard_battery_status"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        id(battery_status_g) = root["state"].as<std::string>();
+                        id(battery_status_valid) = true;
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: id(battery_status_valid) = false;
+
 # ---------------------------------------------------------------------------
 # Display: identical hardware/pin config to the main solar-battery-guard
 # board (same LCDWIKI ESP32-32E/E32R28T) - reset_pin GPIO4, color_palette
@@ -602,6 +634,10 @@ display:
       float consumed_ah = use_push ? id(consumed_ah_push).state : id(consumed_ah_g);
       bool time_left_valid = use_push ? !isnan(id(time_remaining_push).state) : id(time_remaining_valid);
       float time_left = use_push ? id(time_remaining_push).state : id(time_remaining_g);
+      bool status_valid = use_push ? id(battery_status_push).has_state() : id(battery_status_valid);
+      std::string status = use_push
+          ? (id(battery_status_push).has_state() ? id(battery_status_push).state : "")
+          : id(battery_status_g);
 
       // Battery SoC (big number, center)
       if (!soc_valid) {
@@ -643,6 +679,11 @@ display:
           } else {
             snprintf(time_part, sizeof(time_part), "%.1fh left", time_left);
           }
+        } else if (status_valid && status != "Unknown") {
+          // Time Remaining is only meaningful while discharging - while
+          // charging/idle it's legitimately unavailable, so show the
+          // actual reason (from Battery Status) instead of a bare "--".
+          snprintf(time_part, sizeof(time_part), "%s", status.c_str());
         } else {
           snprintf(time_part, sizeof(time_part), "--h left");
         }

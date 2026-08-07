@@ -406,6 +406,17 @@ sensor:
     update_interval: 5s
     lambda: return id(total_energy_out) / 1000.0;
 
+text_sensor:
+  - platform: template
+    name: "Battery Status"
+    icon: "mdi:battery-sync"
+    update_interval: 5s
+    lambda: |-
+      if (isnan(id(batt_power).state)) return {"Unknown"};
+      if (id(batt_power).state > 0) return {"Charging"};
+      if (id(batt_power).state < 0) return {"Discharging"};
+      return {"Idle"};
+
 binary_sensor:
   # Fires once (edge-triggered via on_press) when voltage has been at/above
   # the threshold AND current tapered at/below the tail threshold,
