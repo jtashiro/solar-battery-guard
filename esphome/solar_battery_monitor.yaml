@@ -158,6 +158,14 @@ globals:
     type: int
     restore_value: no
     initial_value: '-1'
+  # Incremented on every tap that's provisionally treated as a single tap;
+  # lets the delayed single-tap action (below) tell whether a second tap
+  # arrived in the meantime and cancel itself, since a scheduled callback
+  # can't otherwise be "unscheduled" mid-flight.
+  - id: touch_seq
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 # ---------------------------------------------------------------------------
 # Lets you switch, live from Home Assistant, between the two data-sourcing
@@ -560,14 +568,36 @@ touchscreen:
       y_max: 4095
     on_touch:
       - lambda: |-
-          // Debounced - a single physical tap can otherwise register as
-          // multiple touch events while contact is held/bounces.
-          static uint32_t last_toggle = 0;
+          // Single tap toggles display mode; double tap toggles the
+          // backlight directly (no Home Assistant round-trip). A lone tap
+          // can't be acted on immediately since we don't yet know whether
+          // a second tap is coming - so it's scheduled after a short
+          // "wait and see" delay, and touch_seq lets that delayed callback
+          // notice a second tap arrived in the meantime and stand down.
+          static uint32_t last_touch_ms = 0;
+          static uint32_t bounce_guard_ms = 0;
+          const uint32_t bounce_window = 150;    // ignore contact-bounce retriggers
+          const uint32_t double_tap_window = 350; // max gap counted as a double tap
+
           uint32_t now = millis();
-          if (now - last_toggle < 600) return;
-          last_toggle = now;
-          std::string next_mode = id(display_mode).state == "Classic" ? "App Style" : "Classic";
-          id(display_mode).make_call().set_option(next_mode).perform();
+          if (now - bounce_guard_ms < bounce_window) return;
+          bounce_guard_ms = now;
+
+          bool is_double_tap = last_touch_ms != 0 && (now - last_touch_ms) < double_tap_window;
+
+          if (is_double_tap) {
+            last_touch_ms = 0;
+            id(back_light).toggle().perform();
+          } else {
+            last_touch_ms = now;
+            uint32_t seq = ++id(touch_seq);
+            App.scheduler.set_timeout(id(touch_screen), "single_tap", double_tap_window, [seq]() {
+              if (seq == id(touch_seq)) {
+                std::string next_mode = id(display_mode).state == "Classic" ? "App Style" : "Classic";
+                id(display_mode).make_call().set_option(next_mode).perform();
+              }
+            });
+          }
 
 output:
   - platform: ledc
