@@ -4,7 +4,7 @@ substitutions:
 
   # --- Charger control thresholds (also adjustable live from Home Assistant
   #     as number entities once flashed) ---
-  soc_turn_on_default: "30"    # % SoC at/below which the AC charger turns ON
+  soc_turn_on_default: "70"    # % SoC at/below which the AC charger turns ON
   soc_turn_off_default: "90"   # % SoC at/above which the AC charger turns OFF
 
 esphome:
