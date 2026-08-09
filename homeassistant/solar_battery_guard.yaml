@@ -76,6 +76,42 @@ automation:
                 target:
                   entity_id: switch.charger_and_fan_socket_2
 
+  - id: "solar_battery_guard_charger_on_email_alert"
+    alias: "Solar Battery Guard - Charger ON Email Alert"
+    description: "Emails when the AC charger turns on due to low battery voltage."
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: switch.charger_and_fan_socket_2
+        to: "on"
+    action:
+      - service: notify.send_message
+        target:
+          entity_id: notify.homeassistant_john_tashiro
+        data:
+          title: "Solar Battery Guard - Charger ON"
+          message: >
+            AC charger turned ON - battery voltage is
+            {{ states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage')|float|round(2) }}V.
+
+  - id: "solar_battery_guard_charger_off_email_alert"
+    alias: "Solar Battery Guard - Charger OFF Email Alert"
+    description: "Emails when the AC charger turns off after battery voltage recovers."
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: switch.charger_and_fan_socket_2
+        to: "off"
+    action:
+      - service: notify.send_message
+        target:
+          entity_id: notify.homeassistant_john_tashiro
+        data:
+          title: "Solar Battery Guard - Charger OFF"
+          message: >
+            AC charger turned OFF - battery voltage is
+            {{ states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage')|float|round(2) }}V.
+
   - id: "solar_battery_guard_charger_desync_alert"
     alias: "Solar Battery Guard - Charger Plug Desync Alert"
     description: >
