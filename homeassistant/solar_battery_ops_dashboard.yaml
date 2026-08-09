@@ -21,9 +21,19 @@
 #   there, e.g. next to configuration.yaml, adjusting the filename: path if
 #   you put it somewhere else such as a packages/ subfolder.)
 #
+# NOTE ON EDITING LIVE IN HA: Home Assistant's dashboard storage
+# re-serializes YAML without comments every time it saves, whether you
+# paste into the raw editor or drag things around in the visual editor -
+# so if you pull the config back out of HA and copy it over this file, all
+# comments (including this one) will be gone again. If you want this file
+# to stay the documented reference copy, prefer editing it here and
+# re-pasting into HA's raw editor, rather than editing live in HA and
+# copying back out.
+#
 # ENTITY ID CAVEAT: this project has repeatedly hit HA entity-registry
 # naming collisions that silently prepend an area prefix (e.g.
-# "si_mining_shed_") onto newly-created entities - see README/other package
+# "si_mining_shed_" for the Guard's area, "si_master_bedroom_" for the
+# Monitor's) onto newly-created entities - see README/other package
 # comments in this folder. Entities below marked "(unconfirmed)" are my
 # best guess following this project's established naming pattern but
 # haven't been individually checked against your live instance. If any row
@@ -36,75 +46,113 @@ views:
   - title: Overview
     path: overview
     icon: mdi:solar-power-variant
-    cards:
-      # Only rendered while Renogy reports actively MPPT solar charging -
-      # same condition used for the sun icon on the physical monitor's
-      # screen, kept in sync here for the dashboard view.
-      - type: conditional
-        conditions:
-          - entity: sensor.renogy_controller_renogy_charging_status
-            state: "mppt"
-        card:
-          type: markdown
-          content: "## ☀️ Solar Charging (MPPT)"
-
-      - type: horizontal-stack
+    # "sections" view type (rather than the default masonry) is what lets
+    # each row below span the full browser width - masonry has no stock
+    # way to make a card/row break out of its column, and would otherwise
+    # pack the gauges and Charger Status/Voltages/Power rows side by side
+    # into leftover column space instead of stacking them.
+    type: sections
+    max_columns: 4
+    sections:
+      # Row 1: solar-charging banner. Only rendered while Renogy reports
+      # actively MPPT solar charging.
+      - type: grid
+        # column_span claims all of the view's row-tracks for this
+        # section alone, so nothing else can sit beside it in the same
+        # row - this is what forces the next section onto a new row
+        # below. grid_options.columns: full (on the card itself, below)
+        # additionally fills that section's own width - the two settings
+        # do different things and both are needed for true full width.
+        column_span: 4
         cards:
-          - type: gauge
-            entity: sensor.solar_battery_guard_battery_soc
-            name: Shunt SoC
-            min: 0
-            max: 100
-          - type: gauge
-            entity: sensor.renogy_controller_renogy_battery_percentage
-            name: Renogy %
-            min: 0
-            max: 100
-          - type: gauge
-            entity: sensor.si_mining_shed_bm2_battery_monitor_9598_percent
-            name: BM2 %
-            min: 0
-            max: 100
+          - type: conditional
+            conditions:
+              - entity: sensor.renogy_controller_renogy_charging_status
+                state: "mppt"
+            card:
+              type: markdown
+              content: "## ☀️ Solar Charging (MPPT)"
+            grid_options:
+              columns: full
 
-      - type: entities
-        title: Charger Status
-        entities:
-          - entity: binary_sensor.solar_battery_guard_ac_charger_should_run
-            name: Guard says charger should run
-          - entity: switch.charger_and_fan_socket_2
-            name: AC charger plug (actual)
-          - entity: select.solar_battery_guard_charger_mode
-            name: Charger mode
-          - entity: sensor.renogy_controller_renogy_charging_status
-            name: Renogy charging status
+      # Row 2: SoC gauges (Shunt/Renogy/BM2 side by side). Kept in its own
+      # column_span: 4 section - separate from row 3 below - since a
+      # single section's internal grid packs multiple cards by its own
+      # rules (not necessarily one per row), so each intended row gets its
+      # own full-width section for a reliable, explicit result.
+      - type: grid
+        column_span: 4
+        cards:
+          - type: horizontal-stack
+            cards:
+              - type: gauge
+                entity: sensor.solar_battery_guard_battery_soc
+                name: Shunt SoC
+                min: 0
+                max: 100
+              - type: gauge
+                entity: sensor.renogy_controller_renogy_battery_percentage
+                name: Renogy %
+                min: 0
+                max: 100
+              - type: gauge
+                entity: sensor.si_mining_shed_bm2_battery_monitor_9598_percent
+                name: BM2 %
+                min: 0
+                max: 100
 
-      - type: entities
-        title: Voltages
-        entities:
-          - entity: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
-            name: Renogy voltage (via Guard)
-          - entity: sensor.solar_battery_guard_battery_voltage
-            name: Shunt voltage
-          - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
-            name: BM2 voltage
-          - entity: sensor.renogy_controller_renogy_pv_voltage
-            name: PV voltage
+      # Row 3: Charger Status / Voltages / Power & Current side by side.
+      - type: grid
+        column_span: 4
+        cards:
+          - type: horizontal-stack
+            cards:
+              - type: entities
+                title: Charger Status
+                entities:
+                  - entity: binary_sensor.solar_battery_guard_ac_charger_should_run
+                    name: Guard says charger should run
+                  - entity: switch.charger_and_fan_socket_2
+                    name: AC charger plug (actual)
+                  - entity: select.solar_battery_guard_charger_mode
+                    name: Charger mode
+                  - entity: sensor.renogy_controller_renogy_charging_status
+                    name: Renogy charging status
+                    icon: mdi:white-balance-sunny
 
-      - type: entities
-        title: Power & Current
-        entities:
-          - entity: sensor.solar_battery_guard_battery_current
-            name: Battery current (shunt)
-          - entity: sensor.solar_battery_guard_battery_power
-            name: Battery power (shunt)
-          - entity: sensor.renogy_controller_renogy_pv_power
-            name: PV power
-          - entity: sensor.renogy_controller_renogy_pv_current
-            name: PV current
-          - entity: sensor.renogy_controller_renogy_load_power
-            name: Load power
-          - entity: sensor.solar_battery_guard_consumed_ah
-            name: Consumed Ah since last calibration
+              - type: entities
+                title: Voltages
+                entities:
+                  - entity: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
+                    name: Renogy voltage (via Guard)
+                  - entity: sensor.solar_battery_guard_battery_voltage
+                    name: Shunt voltage
+                  - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
+                    name: BM2 voltage
+                  - entity: sensor.renogy_controller_renogy_pv_voltage
+                    name: PV voltage
+
+              - type: entities
+                title: Power & Current
+                entities:
+                  - entity: sensor.solar_battery_guard_battery_current
+                    name: Battery current (shunt)
+                  - entity: sensor.solar_battery_guard_battery_power
+                    name: Battery power (shunt)
+                  - entity: sensor.renogy_controller_renogy_pv_power
+                    name: PV power
+                  - entity: sensor.renogy_controller_renogy_pv_current
+                    name: PV current
+                  - entity: sensor.renogy_controller_renogy_load_power
+                    name: Load power
+                  - entity: sensor.solar_battery_guard_consumed_ah
+                    name: Consumed Ah since last calibration
+            # Fills this card's own section width - redundant with the
+            # section's column_span: 4 above (both achieve full width),
+            # left in place since it was added via the HA UI editor and is
+            # harmless to keep.
+            grid_options:
+              columns: full
 
   - title: Guard Control
     path: guard-control
@@ -228,5 +276,8 @@ views:
             name: Percent
           - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
             name: Voltage
+          # Never independently confirmed against Developer Tools -> States
+          # (see ENTITY ID CAVEAT at the top of this file) - fix if this
+          # row shows "Entity not available".
           - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_status
             name: Status (unconfirmed entity id)
