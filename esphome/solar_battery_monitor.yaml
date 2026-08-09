@@ -95,6 +95,42 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  - id: bm2_voltage_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: bm2_voltage_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: pv_power_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: pv_current_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: pv_voltage_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: pv_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: bm2_percent_g
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: bm2_percent_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: renogy_charging_status_g
+    type: std::string
+    restore_value: no
+    initial_value: '""'
   - id: soc_turn_on_g
     type: float
     restore_value: no
@@ -228,6 +264,31 @@ sensor:
     internal: true
 
   - platform: homeassistant
+    id: bm2_voltage_push
+    entity_id: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
+    internal: true
+
+  - platform: homeassistant
+    id: bm2_percent_push
+    entity_id: sensor.si_mining_shed_bm2_battery_monitor_9598_percent
+    internal: true
+
+  - platform: homeassistant
+    id: pv_power_push
+    entity_id: sensor.renogy_controller_renogy_pv_power
+    internal: true
+
+  - platform: homeassistant
+    id: pv_current_push
+    entity_id: sensor.renogy_controller_renogy_pv_current
+    internal: true
+
+  - platform: homeassistant
+    id: pv_voltage_push
+    entity_id: sensor.renogy_controller_renogy_pv_voltage
+    internal: true
+
+  - platform: homeassistant
     id: battery_current_push
     entity_id: sensor.solar_battery_guard_battery_current
     internal: true
@@ -272,6 +333,11 @@ text_sensor:
   - platform: homeassistant
     id: battery_status_push
     entity_id: sensor.si_mining_shed_solar_battery_guard_battery_status
+    internal: true
+
+  - platform: homeassistant
+    id: renogy_charging_status_push
+    entity_id: sensor.renogy_controller_renogy_charging_status
     internal: true
 
 # ---------------------------------------------------------------------------
@@ -344,7 +410,128 @@ interval:
                   - lambda: |-
                       id(battery_vc_valid) = false;
                       ESP_LOGW("ha_poll", "Failed to fetch battery_voltage");
-    
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.si_mining_shed_bm2_battery_monitor_9598_voltage"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(bm2_voltage_g) = *val;
+                          id(bm2_voltage_valid) = true;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      id(bm2_voltage_valid) = false;
+                      ESP_LOGW("ha_poll", "Failed to fetch bm2_voltage");
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.si_mining_shed_bm2_battery_monitor_9598_percent"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(bm2_percent_g) = *val;
+                          id(bm2_percent_valid) = true;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      id(bm2_percent_valid) = false;
+                      ESP_LOGW("ha_poll", "Failed to fetch bm2_percent");
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.renogy_controller_renogy_pv_power"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(pv_power_g) = *val;
+                          id(pv_valid) = true;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      id(pv_valid) = false;
+                      ESP_LOGW("ha_poll", "Failed to fetch pv_power");
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.renogy_controller_renogy_pv_current"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(pv_current_g) = *val;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      ESP_LOGW("ha_poll", "Failed to fetch pv_current");
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.renogy_controller_renogy_pv_voltage"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        std::string state = root["state"].as<std::string>();
+                        auto val = parse_number<float>(state);
+                        if (val.has_value()) {
+                          id(pv_voltage_g) = *val;
+                        }
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      ESP_LOGW("ha_poll", "Failed to fetch pv_voltage");
+
           - http_request.get:
               url: "${ha_url}/api/states/sensor.solar_battery_guard_battery_current"
               request_headers:
@@ -436,6 +623,25 @@ interval:
                         id(charger_mode_g) = root["state"].as<std::string>();
                         return true;
                       });
+
+          - http_request.get:
+              url: "${ha_url}/api/states/sensor.renogy_controller_renogy_charging_status"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        id(renogy_charging_status_g) = root["state"].as<std::string>();
+                        return true;
+                      });
+              on_error:
+                then:
+                  - lambda: |-
+                      ESP_LOGW("ha_poll", "Failed to fetch renogy_charging_status");
 
           - http_request.get:
               url: "${ha_url}/api/states/sensor.solar_battery_guard_battery_power"
@@ -733,6 +939,29 @@ display:
       float voltage = use_push ? id(battery_voltage_push).state : id(battery_voltage_g);
       float current = use_push ? id(battery_current_push).state : id(battery_current_g);
 
+      bool bm2_valid = use_push ? !isnan(id(bm2_voltage_push).state) : id(bm2_voltage_valid);
+      float bm2_voltage = use_push ? id(bm2_voltage_push).state : id(bm2_voltage_g);
+
+      bool bm2_percent_valid_disp = use_push ? !isnan(id(bm2_percent_push).state) : id(bm2_percent_valid);
+      float bm2_percent = use_push ? id(bm2_percent_push).state : id(bm2_percent_g);
+
+      bool pv_valid_disp = use_push
+          ? (!isnan(id(pv_power_push).state) && !isnan(id(pv_current_push).state) && !isnan(id(pv_voltage_push).state))
+          : id(pv_valid);
+      float pv_power = use_push ? id(pv_power_push).state : id(pv_power_g);
+      float pv_current = use_push ? id(pv_current_push).state : id(pv_current_g);
+      float pv_voltage = use_push ? id(pv_voltage_push).state : id(pv_voltage_g);
+      // "Charging" here means the PV array is actively producing into the
+      // battery (not the AC charger relay) - green while panels are
+      // contributing power, red when they aren't (night, heavy cloud, etc).
+      bool pv_charging = pv_valid_disp && pv_power > 0.0f;
+      Color pv_label_color = pv_charging ? id(col_green) : id(col_red);
+
+      std::string renogy_charging_status = use_push
+          ? (id(renogy_charging_status_push).has_state() ? id(renogy_charging_status_push).state : "")
+          : id(renogy_charging_status_g);
+      bool solar_charging = renogy_charging_status == "mppt";
+
       bool charging_valid = use_push ? id(charger_should_run_push).has_state() : id(charger_should_run_valid);
       bool charging = charging_valid && (use_push ? id(charger_should_run_push).state : id(charger_should_run_g));
       std::string mode = use_push
@@ -769,7 +998,7 @@ display:
 
       if (app_style) {
         // ----- App Style: approximates the Renogy app's home screen
-        // (circular SoC gauge + Output stat rows) using basic display
+        // (horizontal SoC bar + Output stat rows) using basic display
         // primitives only - no gradients or vector icons available on
         // this display. Positions are relative to it.get_width()/
         // get_height() rather than hardcoded, since the actual canvas
@@ -779,87 +1008,129 @@ display:
         // of what that combination actually produces. -----
         int w = it.get_width();
         int h = it.get_height();
-        int cx = w / 2;
-        // Gauge sized smaller and anchored below a fixed header
-        // clearance (rather than a height-proportional cy) so its top
-        // edge never overlaps the "SOLAR BATTERY MONITOR" / "Updated..."
-        // header lines regardless of canvas size.
+        // Bar replaces the old circular gauge - shorter vertically, which
+        // frees up room for extra stat rows (e.g. BM2 Voltage) below.
+        // Anchored below a fixed header clearance so it never overlaps the
+        // "SOLAR BATTERY MONITOR" / "Updated..." header lines regardless
+        // of canvas size.
         int header_clearance = 62;
-        float r_outer = std::min(w, h) * 0.22f;
-        float r_inner = r_outer * 0.78f;
-        int cy = header_clearance + static_cast<int>(r_outer);
-        Color gauge_color = id(col_green);
+        int bar_x = static_cast<int>(w * 0.08f);
+        int bar_w = static_cast<int>(w * 0.84f);
+        // Bars shrunk (was 0.08h) to make room for a second bar (BM2) plus
+        // the extra PV rows below - height/font all reduced together so
+        // nothing overlaps or runs off the bottom of the 320px canvas.
+        int bar_h = static_cast<int>(h * 0.05f);
+        int bar_gap = static_cast<int>(h * 0.015f);
+
+        // Helper draws one label+value-on-bar row: background track, a
+        // color-coded fill proportional to pct, and label/value text
+        // overlaid directly on the bar (same line, left/right split) so
+        // it can't collide with anything else on screen.
+        auto draw_bar = [&](int y, bool valid, float pct, const char* label, Color fill_color) {
+          it.filled_rectangle(bar_x, y, bar_w, bar_h, id(col_dark_teal));
+          if (valid) {
+            float clamped = std::min(std::max(pct, 0.0f), 100.0f);
+            int fill_w = static_cast<int>(bar_w * clamped / 100.0f);
+            if (fill_w > 0) it.filled_rectangle(bar_x, y, fill_w, bar_h, fill_color);
+          }
+          char pctbuf[8];
+          if (valid) snprintf(pctbuf, sizeof(pctbuf), "%.0f%%", pct);
+          else snprintf(pctbuf, sizeof(pctbuf), "--");
+          it.print(bar_x + 6, y + bar_h / 2, id(font_tiny), id(col_white), TextAlign::CENTER_LEFT, label);
+          it.print(bar_x + bar_w - 6, y + bar_h / 2, id(font_tiny), id(col_white), TextAlign::CENTER_RIGHT, pctbuf);
+        };
+
+        Color soc_bar_color = id(col_green);
         if (soc_valid) {
-          if (soc <= soc_on_th) gauge_color = id(col_red);
-          else if (soc < soc_off_th) gauge_color = id(col_yellow);
+          if (soc <= soc_on_th) soc_bar_color = id(col_red);
+          else if (soc < soc_off_th) soc_bar_color = id(col_yellow);
         }
-        for (int deg = 0; deg < 360; deg += 2) {
-          float a = (deg - 90) * 3.14159265f / 180.0f;
-          float cos_a = cos(a), sin_a = sin(a);
-          int x1 = cx + static_cast<int>(r_inner * cos_a);
-          int y1 = cy + static_cast<int>(r_inner * sin_a);
-          int x2 = cx + static_cast<int>(r_outer * cos_a);
-          int y2 = cy + static_cast<int>(r_outer * sin_a);
-          bool filled = soc_valid && (deg < (360.0f * soc / 100.0f));
-          it.line(x1, y1, x2, y2, filled ? gauge_color : id(col_dark_teal));
-        }
-        if (soc_valid) {
-          char sbuf2[8];
-          snprintf(sbuf2, sizeof(sbuf2), "%.0f%%", soc);
-          it.print(cx, cy, id(font_medium), id(col_white), TextAlign::CENTER, sbuf2);
-        } else {
-          it.print(cx, cy, id(font_tiny), id(col_grey), TextAlign::CENTER, "NO DATA");
-        }
-        // Battery Status, inside the ring under the % - proportional to
-        // the gauge size so it stays inside r_inner regardless of canvas.
+        int bar1_y = header_clearance;
+        draw_bar(bar1_y, soc_valid, soc, "Renogy", soc_bar_color);
+
+        int bar2_y = bar1_y + bar_h + bar_gap;
+        draw_bar(bar2_y, bm2_percent_valid_disp, bm2_percent, "BM2", id(col_teal));
+
+        // Battery Status, on its own line directly below the bars.
+        int status_y = bar2_y + bar_h + static_cast<int>(h * 0.035f);
         if (status_valid && !status.empty()) {
-          it.print(cx, cy + static_cast<int>(r_outer * 0.38f), id(font_tiny), id(col_teal),
+          it.print(w / 2, status_y, id(font_tiny), id(col_teal),
                     TextAlign::CENTER, status.c_str());
         }
 
-        // Rows stack below the gauge (portrait-style, matching the app's
+        // Sun icon (filled circle + 8 rays, drawn with primitives only -
+        // no icon font/vector graphics on this display) - shown on the
+        // status line whenever Renogy reports actively MPPT solar
+        // charging. Left-aligned so it doesn't collide with the centered
+        // status text next to it.
+        if (solar_charging) {
+          int sun_cx = bar_x + 8;
+          int sun_cy = status_y;
+          int sun_r = 5;
+          it.filled_circle(sun_cx, sun_cy, sun_r, id(col_yellow));
+          for (int deg = 0; deg < 360; deg += 45) {
+            float a = deg * 3.14159265f / 180.0f;
+            int x1 = sun_cx + static_cast<int>((sun_r + 2) * cos(a));
+            int y1 = sun_cy + static_cast<int>((sun_r + 2) * sin(a));
+            int x2 = sun_cx + static_cast<int>((sun_r + 5) * cos(a));
+            int y2 = sun_cy + static_cast<int>((sun_r + 5) * sin(a));
+            it.line(x1, y1, x2, y2, id(col_yellow));
+          }
+        }
+
+        // Rows stack below the bars (portrait-style, matching the app's
         // layout) rather than beside it - correct regardless of whether
         // the rotated canvas ends up wide or tall, since it's all
         // relative to w/h rather than assuming a particular orientation.
-        // icon_r shrunk and row_spacing widened relative to before -
-        // circles were previously touching/overlapping since spacing was
-        // barely larger than icon diameter, and 5 rows didn't fit in the
-        // available height at all (Time Remaining was pushed off-screen).
-        // icon_r shrunk further to free up horizontal room for the
-        // larger label/value font (font_small instead of font_tiny) -
-        // readability was the point of sizing up, so the icons give up
-        // the space rather than the text.
-        int row_spacing = static_cast<int>(h * 0.08f);
-        int row_y = cy + static_cast<int>(r_outer) + static_cast<int>(h * 0.05f);
+        // Spacing/font both shrunk from earlier versions to fit 9 rows
+        // (was 6) in the space available above the charger status banner.
+        int row_spacing = static_cast<int>(h * 0.06f);
+        int row_y = status_y + static_cast<int>(h * 0.045f);
         int icon_x = static_cast<int>(w * 0.08f);
         int icon_r = static_cast<int>(w * 0.03f);
         int label_x = static_cast<int>(w * 0.17f);
         int value_x = static_cast<int>(w * 0.92f);
-        auto draw_row = [&](const char* icon_letter, const char* label, const char* value) {
+        auto draw_row = [&](const char* icon_letter, const char* label, const char* value, Color label_color) {
           it.filled_circle(icon_x, row_y, icon_r, id(col_dark_teal));
           it.print(icon_x, row_y, id(font_tiny), id(col_teal), TextAlign::CENTER, icon_letter);
-          it.print(label_x, row_y, id(font_small), id(col_white), TextAlign::CENTER_LEFT, label);
+          it.print(label_x, row_y, id(font_small), label_color, TextAlign::CENTER_LEFT, label);
           it.print(value_x, row_y, id(font_small), id(col_teal), TextAlign::CENTER_RIGHT, value);
           row_y += row_spacing;
         };
 
         char vbuf2[16];
         if (vc_valid) snprintf(vbuf2, sizeof(vbuf2), "%.2fV", voltage); else snprintf(vbuf2, sizeof(vbuf2), "--");
-        draw_row("V", "Voltage", vbuf2);
+        draw_row("V", "Renogy Voltage", vbuf2, id(col_white));
+
+        char bm2buf[16];
+        if (bm2_valid) snprintf(bm2buf, sizeof(bm2buf), "%.2fV", bm2_voltage); else snprintf(bm2buf, sizeof(bm2buf), "--");
+        draw_row("V", "BM2 Voltage", bm2buf, id(col_white));
+
+        char pvpbuf[16];
+        if (pv_valid_disp) snprintf(pvpbuf, sizeof(pvpbuf), "%.0fW", pv_power); else snprintf(pvpbuf, sizeof(pvpbuf), "--");
+        draw_row("W", "PV Power", pvpbuf, pv_label_color);
+
+        char pvcbuf[16];
+        if (pv_valid_disp) snprintf(pvcbuf, sizeof(pvcbuf), "%.1fA", pv_current); else snprintf(pvcbuf, sizeof(pvcbuf), "--");
+        draw_row("A", "PV Current", pvcbuf, pv_label_color);
+
+        char pvvbuf[16];
+        if (pv_valid_disp) snprintf(pvvbuf, sizeof(pvvbuf), "%.2fV", pv_voltage); else snprintf(pvvbuf, sizeof(pvvbuf), "--");
+        draw_row("V", "PV Voltage", pvvbuf, pv_label_color);
 
         char cbuf2[16];
         if (vc_valid) snprintf(cbuf2, sizeof(cbuf2), "%.1fA", current); else snprintf(cbuf2, sizeof(cbuf2), "--");
-        draw_row("A", "Current", cbuf2);
+        draw_row("A", "Current", cbuf2, id(col_white));
 
         char pbuf2[16];
         if (power_valid) snprintf(pbuf2, sizeof(pbuf2), "%.0fW", power); else snprintf(pbuf2, sizeof(pbuf2), "--");
-        draw_row("W", "Power", pbuf2);
+        draw_row("W", "Power", pbuf2, id(col_white));
 
         char ahbuf2[16];
         snprintf(ahbuf2, sizeof(ahbuf2), "%.1fAh", consumed_ah);
-        draw_row("Ah", "Consumed Ah", ahbuf2);
+        draw_row("Ah", "Consumed Ah", ahbuf2, id(col_white));
 
-        draw_row("T", "Time left", time_part);
+        draw_row("T", "Time left", time_part, id(col_white));
       } else {
         // ----- Classic layout (unchanged) -----
         if (!soc_valid) {
@@ -896,6 +1167,15 @@ display:
         }
         it.print(it.get_width() / 2, 178, id(font_small_bold), id(col_grey),
                   TextAlign::CENTER, pbuf);
+
+        char bm2buf3[24];
+        if (bm2_valid) {
+          snprintf(bm2buf3, sizeof(bm2buf3), "BM2 Voltage: %.2f V", bm2_voltage);
+        } else {
+          snprintf(bm2buf3, sizeof(bm2buf3), "BM2 Voltage: -- V");
+        }
+        it.print(it.get_width() / 2, 196, id(font_tiny), id(col_teal),
+                  TextAlign::CENTER, bm2buf3);
       }
 
       // Charger status banner - shared across both display modes, since
