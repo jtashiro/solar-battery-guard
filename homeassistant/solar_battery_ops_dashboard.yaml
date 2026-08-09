@@ -1,0 +1,232 @@
+# "Solar Battery Ops" Lovelace dashboard - consolidated view/control for
+# Renogy, BM2, and both Solar Battery Guard/Monitor ESPHome devices.
+#
+# HOW TO INSTALL:
+#   Settings -> Dashboards -> "+ Add Dashboard" -> "New dashboard from
+#   scratch", give it any title, then open it, click the "..." menu (top
+#   right) -> "Edit Dashboard" -> "..." again -> "Raw configuration editor",
+#   delete what's there, and paste this file's contents in. Rename the
+#   dashboard to "Solar Battery Ops" if the title didn't take from the YAML.
+#
+#   Alternatively, reference this file directly instead of pasting, by
+#   adding to configuration.yaml:
+#     lovelace:
+#       dashboards:
+#         solar-battery-ops:
+#           mode: yaml
+#           title: "Solar Battery Ops"
+#           icon: mdi:solar-power-variant
+#           filename: solar_battery_ops_dashboard.yaml
+#   (path is relative to your HA config directory - copy/symlink this file
+#   there, e.g. next to configuration.yaml, adjusting the filename: path if
+#   you put it somewhere else such as a packages/ subfolder.)
+#
+# ENTITY ID CAVEAT: this project has repeatedly hit HA entity-registry
+# naming collisions that silently prepend an area prefix (e.g.
+# "si_mining_shed_") onto newly-created entities - see README/other package
+# comments in this folder. Entities below marked "(unconfirmed)" are my
+# best guess following this project's established naming pattern but
+# haven't been individually checked against your live instance. If any row
+# shows "Entity not available", open Developer Tools -> States, search for
+# the entity's friendly name, and fix that one line's entity id - the rest
+# of the dashboard is unaffected by one bad row.
+
+title: "Solar Battery Ops"
+views:
+  - title: Overview
+    path: overview
+    icon: mdi:solar-power-variant
+    cards:
+      # Only rendered while Renogy reports actively MPPT solar charging -
+      # same condition used for the sun icon on the physical monitor's
+      # screen, kept in sync here for the dashboard view.
+      - type: conditional
+        conditions:
+          - entity: sensor.renogy_controller_renogy_charging_status
+            state: "mppt"
+        card:
+          type: markdown
+          content: "## ☀️ Solar Charging (MPPT)"
+
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: sensor.solar_battery_guard_battery_soc
+            name: Shunt SoC
+            min: 0
+            max: 100
+          - type: gauge
+            entity: sensor.renogy_controller_renogy_battery_percentage
+            name: Renogy %
+            min: 0
+            max: 100
+          - type: gauge
+            entity: sensor.si_mining_shed_bm2_battery_monitor_9598_percent
+            name: BM2 %
+            min: 0
+            max: 100
+
+      - type: entities
+        title: Charger Status
+        entities:
+          - entity: binary_sensor.solar_battery_guard_ac_charger_should_run
+            name: Guard says charger should run
+          - entity: switch.charger_and_fan_socket_2
+            name: AC charger plug (actual)
+          - entity: select.solar_battery_guard_charger_mode
+            name: Charger mode
+          - entity: sensor.renogy_controller_renogy_charging_status
+            name: Renogy charging status
+
+      - type: entities
+        title: Voltages
+        entities:
+          - entity: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
+            name: Renogy voltage (via Guard)
+          - entity: sensor.solar_battery_guard_battery_voltage
+            name: Shunt voltage
+          - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
+            name: BM2 voltage
+          - entity: sensor.renogy_controller_renogy_pv_voltage
+            name: PV voltage
+
+      - type: entities
+        title: Power & Current
+        entities:
+          - entity: sensor.solar_battery_guard_battery_current
+            name: Battery current (shunt)
+          - entity: sensor.solar_battery_guard_battery_power
+            name: Battery power (shunt)
+          - entity: sensor.renogy_controller_renogy_pv_power
+            name: PV power
+          - entity: sensor.renogy_controller_renogy_pv_current
+            name: PV current
+          - entity: sensor.renogy_controller_renogy_load_power
+            name: Load power
+          - entity: sensor.solar_battery_guard_consumed_ah
+            name: Consumed Ah since last calibration
+
+  - title: Guard Control
+    path: guard-control
+    icon: mdi:battery-charging-high
+    cards:
+      - type: entities
+        title: AC Charger Thresholds
+        entities:
+          - select.solar_battery_guard_charger_mode
+          - switch.charger_and_fan_socket_2
+          - entity: number.si_mining_shed_solar_battery_guard_charger_turn_on_voltage
+            name: Turn-on voltage
+          - entity: number.si_mining_shed_solar_battery_guard_charger_turn_on_voltage_solar_charging
+            name: Turn-on voltage (solar charging)
+          - entity: number.si_mining_shed_solar_battery_guard_charger_turn_off_voltage
+            name: Turn-off voltage
+          - entity: number.solar_battery_guard_charger_turn_on_soc
+            name: Turn-on SoC (display color only)
+          - entity: number.solar_battery_guard_charger_turn_off_soc
+            name: Turn-off SoC (display color only)
+
+      - type: entities
+        title: Calibration
+        entities:
+          - entity: switch.si_mining_shed_solar_battery_guard_auto_calibrate_on_full_charge
+            name: Auto-calibrate on full charge
+          - entity: switch.solar_battery_guard_set_charged_state_calibrate_100
+            name: Set charged state (calibrate 100%)
+          - entity: switch.solar_battery_guard_set_discharged_state_calibrate_low_point
+            name: Set discharged state (calibrate low point)
+          - entity: switch.solar_battery_guard_reset_energy_stats
+            name: Reset energy stats
+          - entity: number.solar_battery_guard_battery_capacity
+            name: Battery capacity
+          - entity: number.solar_battery_guard_charge_efficiency
+            name: Charge efficiency
+          - entity: number.si_mining_shed_solar_battery_guard_auto_calibrate_voltage_threshold
+            name: Auto-calibrate voltage threshold
+          - entity: number.si_mining_shed_solar_battery_guard_auto_calibrate_tail_current_threshold
+            name: Auto-calibrate tail current threshold
+
+      - type: entities
+        title: Guard Backlight Schedule
+        entities:
+          - light.solar_battery_guard_backlight
+          - input_select.solar_battery_guard_backlight_schedule_mode
+          - input_datetime.solar_battery_guard_backlight_off_time
+          - input_datetime.solar_battery_guard_backlight_on_time
+
+      - type: entities
+        title: Monitor Display & Backlight
+        entities:
+          - entity: select.si_master_bedroom_solar_battery_monitor_display_mode
+            name: Display mode (Classic/App Style)
+          - entity: select.solar_battery_monitor_data_source
+            name: Data source (Push/HTTP Polling)
+          - entity: light.solar_battery_monitor_backlight
+            name: Monitor backlight
+          - input_select.solar_battery_monitor_backlight_schedule_mode
+          - input_datetime.solar_battery_monitor_backlight_off_time
+          - input_datetime.solar_battery_monitor_backlight_on_time
+          - entity: sensor.solar_battery_monitor_wifi_signal
+            name: Monitor WiFi signal
+
+  - title: Renogy
+    path: renogy
+    icon: mdi:solar-panel
+    cards:
+      - type: entities
+        title: Sensors - Battery
+        entities:
+          - sensor.renogy_controller_renogy_battery_voltage
+          - sensor.renogy_controller_renogy_battery_current
+          - sensor.renogy_controller_renogy_battery_percentage
+          - sensor.renogy_controller_renogy_battery_temperature
+          - sensor.renogy_controller_renogy_battery_type
+          - sensor.renogy_controller_renogy_charging_status
+          - sensor.renogy_controller_renogy_charging_amp_hours_today
+          - sensor.renogy_controller_renogy_discharging_amp_hours_today
+
+      - type: entities
+        title: Sensors - PV
+        entities:
+          - sensor.renogy_controller_renogy_pv_voltage
+          - sensor.renogy_controller_renogy_pv_current
+          - sensor.renogy_controller_renogy_pv_power
+          - sensor.renogy_controller_renogy_power_generation_today
+          - sensor.renogy_controller_renogy_power_generation_total
+          - sensor.renogy_controller_renogy_max_charging_power_today
+
+      - type: entities
+        title: Sensors - Load
+        entities:
+          - sensor.renogy_controller_renogy_load_voltage
+          - sensor.renogy_controller_renogy_load_current
+          - sensor.renogy_controller_renogy_load_power
+          - sensor.renogy_controller_renogy_load_status
+          - sensor.renogy_controller_renogy_power_consumption_today
+          - sensor.renogy_controller_renogy_max_discharging_power_today
+
+      - type: entities
+        title: Sensors - Controller / Device Info
+        entities:
+          - sensor.renogy_controller_temperature
+          - sensor.renogy_controller_renogy_model
+          - sensor.renogy_controller_renogy_device_id
+
+      - type: entities
+        title: Switch
+        entities:
+          - switch.renogy_controller_renogy_dc_load
+
+  - title: BM2
+    path: bm2
+    icon: mdi:car-battery
+    cards:
+      - type: entities
+        title: BM2 Battery Monitor
+        entities:
+          - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_percent
+            name: Percent
+          - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
+            name: Voltage
+          - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_status
+            name: Status (unconfirmed entity id)

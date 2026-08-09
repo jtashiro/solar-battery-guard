@@ -19,6 +19,12 @@ substitutions:
   # no drift, so it's a more reliable trigger signal.
   charger_turn_on_voltage_default: "11.8"   # V at/below which the AC charger turns ON - kept just above Renogy's own 11.7V undervoltage alarm
   charger_turn_off_voltage_default: "13.6"  # V at/above which the AC charger turns OFF
+  # Lower turn-on floor used only while Renogy reports actively MPPT solar
+  # charging - the AC charger turning on while panels are already recovering
+  # the battery appears to suppress MPPT output, so this avoids firing the
+  # AC charger on a brief morning voltage dip that solar is about to fix on
+  # its own.
+  charger_turn_on_voltage_solar_default: "11.0"
 
 esphome:
   name: ${name}
@@ -227,6 +233,17 @@ number:
     max_value: 15.0
     step: 0.1
     initial_value: ${charger_turn_off_voltage_default}
+    restore_value: true
+    optimistic: true
+
+  - platform: template
+    id: charger_turn_on_voltage_solar_threshold
+    name: "Charger Turn-On Voltage (Solar Charging)"
+    unit_of_measurement: "V"
+    min_value: 8.0
+    max_value: 14.0
+    step: 0.1
+    initial_value: ${charger_turn_on_voltage_solar_default}
     restore_value: true
     optimistic: true
 
@@ -471,6 +488,14 @@ sensor:
     lambda: return id(total_energy_out) / 1000.0;
 
 text_sensor:
+  # Imported from Home Assistant, same rationale as renogy_battery_voltage
+  # above - lets charger_should_run tell whether the panels are actively
+  # replenishing the battery before deciding to also turn on the AC charger.
+  - platform: homeassistant
+    id: renogy_charging_status
+    entity_id: sensor.renogy_controller_renogy_charging_status
+    internal: true
+
   - platform: template
     name: "Battery Status"
     icon: "mdi:battery-sync"
@@ -524,7 +549,16 @@ binary_sensor:
       if (isnan(id(renogy_battery_voltage).state)) return {};  // no data yet from HA
 
       float voltage = id(renogy_battery_voltage).state;
-      float on_th = id(charger_turn_on_voltage_threshold).state;
+      // Lower turn-on floor while solar is actively charging - the AC
+      // charger firing on a brief morning voltage dip that solar is about
+      // to fix on its own appears to suppress MPPT output, so give the
+      // panels more room to work with before also turning on the AC
+      // charger. Turn-off threshold is unaffected - that logic doesn't
+      // change based on solar status.
+      bool solar_charging = id(renogy_charging_status).state == "mppt";
+      float on_th = solar_charging
+          ? id(charger_turn_on_voltage_solar_threshold).state
+          : id(charger_turn_on_voltage_threshold).state;
       float off_th = id(charger_turn_off_voltage_threshold).state;
 
       if (voltage <= on_th) return true;

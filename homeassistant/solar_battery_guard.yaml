@@ -115,28 +115,45 @@ automation:
   - id: "solar_battery_guard_charger_desync_alert"
     alias: "Solar Battery Guard - Charger Plug Desync Alert"
     description: >
-      Warns if the smart plug's actual state doesn't match what the guard
-      commanded, 2 minutes after a command - catches an offline/unresponsive
-      wifi plug during unattended charging.
+      Warns whenever the smart plug's actual state doesn't match what the
+      guard commanded. Polls continuously (every 5 minutes) rather than
+      only checking once right after a commanded change - a one-shot check
+      only catches an offline/unresponsive plug at the moment of a
+      command, but misses a desync introduced later by something else
+      touching the plug directly (e.g. a manual toggle via a non-HA app),
+      since charger_should_run can sit unchanged for a long time while
+      voltage stays inside the hysteresis band.
     mode: single
     trigger:
-      - platform: state
-        entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
-        for:
-          minutes: 2
+      - platform: time_pattern
+        minutes: "/5"
     condition:
       - condition: template
         value_template: >
-          {{ (trigger.to_state.state == 'on') !=
+          {{ (states('binary_sensor.solar_battery_guard_ac_charger_should_run') == 'on') !=
              (states('switch.charger_and_fan_socket_2') == 'on') }}
+      # Cooldown - without this, a persistent desync would re-notify every
+      # 5 minutes for as long as it lasts. Mirrors the cooldown pattern
+      # used by solar_battery_guard_auto_calibrate_on_renogy_full below,
+      # but anchored on this automation's own last_triggered instead of a
+      # helper switch, since this automation doesn't otherwise touch any
+      # entity of its own.
+      - condition: template
+        value_template: >
+          {{ state_attr('automation.solar_battery_guard_charger_desync_alert', 'last_triggered') is none or
+             (now() - state_attr('automation.solar_battery_guard_charger_desync_alert', 'last_triggered')).total_seconds() >= 3600 }}
     action:
-      - service: notify.notify
+      - service: notify.send_message
+        target:
+          entity_id: notify.homeassistant_john_tashiro
         data:
           title: "Solar Battery Guard"
           message: >
-            AC charger plug state does not match commanded state
-            ({{ trigger.to_state.state }}). Check switch.charger_and_fan_socket_2 -
-            it may be offline.
+            AC charger plug state does not match commanded state (guard says
+            {{ states('binary_sensor.solar_battery_guard_ac_charger_should_run') }},
+            plug is {{ states('switch.charger_and_fan_socket_2') }}). Check
+            switch.charger_and_fan_socket_2 - it may be offline, or was
+            changed outside Home Assistant.
 
   - id: "solar_battery_guard_critical_low_soc_alert"
     alias: "Solar Battery Guard - Critical Low SoC Alert"
