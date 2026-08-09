@@ -4,8 +4,21 @@ substitutions:
 
   # --- Charger control thresholds (also adjustable live from Home Assistant
   #     as number entities once flashed) ---
-  soc_turn_on_default: "70"    # % SoC at/below which the AC charger turns ON
-  soc_turn_off_default: "90"   # % SoC at/above which the AC charger turns OFF
+  # SoC thresholds below are no longer what drives charger_should_run (see
+  # Renogy voltage thresholds further down) - they're kept only for the
+  # on-screen SoC gauge's red/yellow color bands.
+  soc_turn_on_default: "70"    # % SoC at/below which the SoC gauge shows red
+  soc_turn_off_default: "90"   # % SoC at/above which the SoC gauge stops showing yellow
+
+  # Charger ON/OFF is driven by Renogy's battery voltage (via Home
+  # Assistant) instead of the shunt's coulomb-counted SoC - the shunt's SoC
+  # estimate drifts over days/weeks (see README), which caused the charger
+  # to silently fail to trigger during an actual over-discharge event
+  # (battery hit 10V manually-observed while the shunt still read well
+  # above its SoC turn-on threshold). Voltage is a direct measurement with
+  # no drift, so it's a more reliable trigger signal.
+  charger_turn_on_voltage_default: "11.8"   # V at/below which the AC charger turns ON - kept just above Renogy's own 11.7V undervoltage alarm
+  charger_turn_off_voltage_default: "13.6"  # V at/above which the AC charger turns OFF
 
 esphome:
   name: ${name}
@@ -195,6 +208,28 @@ number:
     restore_value: true
     optimistic: true
 
+  - platform: template
+    id: charger_turn_on_voltage_threshold
+    name: "Charger Turn-On Voltage"
+    unit_of_measurement: "V"
+    min_value: 8.0
+    max_value: 14.0
+    step: 0.1
+    initial_value: ${charger_turn_on_voltage_default}
+    restore_value: true
+    optimistic: true
+
+  - platform: template
+    id: charger_turn_off_voltage_threshold
+    name: "Charger Turn-Off Voltage"
+    unit_of_measurement: "V"
+    min_value: 8.0
+    max_value: 15.0
+    step: 0.1
+    initial_value: ${charger_turn_off_voltage_default}
+    restore_value: true
+    optimistic: true
+
   # --- Auto-calibrate-on-full thresholds. Mirrors what the FE-Shunt app
   # appears to do on its own: treat "voltage high + current tapered to
   # near-zero, sustained" as true full charge and re-anchor SoC to 100%,
@@ -312,6 +347,35 @@ sensor:
     update_interval: 60s
     entity_category: diagnostic
 
+  # Imported from Home Assistant rather than read locally - Renogy's
+  # controller only talks BLE, and this ESP32 can't run bluetooth_proxy
+  # alongside everything else it's already doing (see "Why there's no
+  # on-device Bluetooth proxy" in the README). HA already has this value
+  # via a separate Bluetooth adapter + HACS integration.
+  - platform: homeassistant
+    id: renogy_battery_voltage
+    entity_id: sensor.renogy_controller_renogy_battery_voltage
+    internal: true
+
+  # homeassistant-platform sensors above are import-only and never register
+  # as their own HA entity even when non-internal - this template sensor is
+  # what actually re-publishes the imported Renogy voltage as a real entity
+  # (sensor.solar_battery_guard_renogy_battery_voltage), for the monitor
+  # device to pull from.
+  - platform: template
+    id: renogy_battery_voltage_display
+    name: "Renogy Battery Voltage"
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    update_interval: 5s
+    lambda: return id(renogy_battery_voltage).state;
+
+  - platform: homeassistant
+    id: renogy_battery_percentage
+    entity_id: sensor.renogy_controller_renogy_battery_percentage
+    internal: true
+
   - platform: tbd_smart_shunt
     battery_voltage:
       name: "Battery Voltage"
@@ -363,12 +427,12 @@ sensor:
     accuracy_decimals: 1
     device_class: battery
     update_interval: 5s
-    lambda: |-
-      if (id(capacity) <= 0) return NAN;
-      float pct = 100.0f * id(current_stored_energy) / id(capacity);
-      if (pct < 0) pct = 0;
-      if (pct > 100) pct = 100;
-      return pct;
+    # Sourced from Renogy's own percentage (via Home Assistant) rather than
+    # the shunt's coulomb-counted estimate below - the shunt's SoC drifts
+    # over days/weeks (see README) and was found to mask a real
+    # over-discharge event. current_stored_energy/capacity are still tracked
+    # for Time Remaining and the Wh totals, just no longer surfaced as SoC%.
+    lambda: return id(renogy_battery_percentage).state;
 
   - platform: template
     name: "Consumed Ah"
@@ -457,14 +521,14 @@ binary_sensor:
       if (mode == "Force ON") return true;
       if (mode == "Force OFF") return false;
 
-      if (isnan(id(battery_soc).state)) return {};  // no data yet / uncalibrated
+      if (isnan(id(renogy_battery_voltage).state)) return {};  // no data yet from HA
 
-      float soc = id(battery_soc).state;
-      float on_th = id(soc_turn_on_threshold).state;
-      float off_th = id(soc_turn_off_threshold).state;
+      float voltage = id(renogy_battery_voltage).state;
+      float on_th = id(charger_turn_on_voltage_threshold).state;
+      float off_th = id(charger_turn_off_voltage_threshold).state;
 
-      if (soc <= on_th) return true;
-      if (soc >= off_th) return false;
+      if (voltage <= on_th) return true;
+      if (voltage >= off_th) return false;
       return {};  // inside the hysteresis band: hold previous state
 
 # ---------------------------------------------------------------------------
@@ -601,11 +665,11 @@ display:
                   TextAlign::CENTER, buf);
       }
 
-      // Voltage / current
+      // Voltage (Renogy, via HA) / current (shunt)
       char vbuf[24];
-      if (!isnan(id(batt_voltage).state)) {
+      if (!isnan(id(renogy_battery_voltage).state)) {
         snprintf(vbuf, sizeof(vbuf), "%.2f V   %.2f A",
-                  id(batt_voltage).state, id(batt_current).state);
+                  id(renogy_battery_voltage).state, id(batt_current).state);
       } else {
         snprintf(vbuf, sizeof(vbuf), "-- V   -- A");
       }

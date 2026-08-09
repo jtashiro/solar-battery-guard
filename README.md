@@ -320,13 +320,21 @@ has selected.
 
 ## Charger control logic
 
-Two adjustable thresholds (numbers, live-editable from Home Assistant),
-default 30% / 90%:
+Driven by Renogy's battery voltage (imported from Home Assistant via
+`sensor.renogy_controller_renogy_battery_voltage`), not the shunt's SoC -
+the shunt's coulomb-counted SoC drifts over days/weeks (see below) and can
+silently mask a real over-discharge, whereas voltage is a direct
+measurement. Two adjustable thresholds (numbers, live-editable from Home
+Assistant), default 10.5V / 13.6V:
 
-- SoC drops **to or below** `Charger Turn-On SoC` -> charger turns ON
-- SoC rises **to or above** `Charger Turn-Off SoC` -> charger turns OFF
+- Voltage drops **to or below** `Charger Turn-On Voltage` -> charger turns ON
+- Voltage rises **to or above** `Charger Turn-Off Voltage` -> charger turns OFF
 - Between the two thresholds, the last state is held (hysteresis, prevents
   relay/plug chatter right at the boundary)
+
+The shunt's own `Charger Turn-On SoC` / `Charger Turn-Off SoC` numbers still
+exist, but only control the on-screen SoC gauge's red/yellow color bands -
+they no longer drive the charger switch.
 
 A `select.solar_battery_guard_charger_mode` entity (Auto / Force ON / Force
 OFF) overrides the automatic logic - useful for manual testing or forcing a

@@ -224,7 +224,7 @@ sensor:
 
   - platform: homeassistant
     id: battery_voltage_push
-    entity_id: sensor.solar_battery_guard_battery_voltage
+    entity_id: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
     internal: true
 
   - platform: homeassistant
@@ -321,7 +321,7 @@ interval:
                       ESP_LOGW("ha_poll", "Failed to fetch battery_soc");
     
           - http_request.get:
-              url: "${ha_url}/api/states/sensor.solar_battery_guard_battery_voltage"
+              url: "${ha_url}/api/states/sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage"
               request_headers:
                 Authorization: "Bearer ${ha_token}"
               capture_response: true
