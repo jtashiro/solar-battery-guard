@@ -151,6 +151,10 @@ globals:
     type: std::string
     restore_value: no
     initial_value: '""'
+  - id: charger_voltage_source_g
+    type: std::string
+    restore_value: no
+    initial_value: '""'
   - id: battery_power_g
     type: float
     restore_value: no
@@ -328,6 +332,16 @@ text_sensor:
   - platform: homeassistant
     id: charger_mode_push
     entity_id: select.solar_battery_guard_charger_mode
+    internal: true
+
+  # Note the "si_mining_shed" area prefix here, unlike charger_mode_push
+  # above - HA assigned it because this entity was newly created after the
+  # device was already placed in that area, while charger_mode predates the
+  # area assignment. Confirmed via GET /api/states - don't assume newly
+  # added entities on this device follow the unprefixed pattern.
+  - platform: homeassistant
+    id: charger_voltage_source_push
+    entity_id: select.si_mining_shed_solar_battery_guard_charger_voltage_source
     internal: true
 
   - platform: homeassistant
@@ -621,6 +635,21 @@ interval:
                       json::parse_json(body, [](JsonObject root) -> bool {
                         if (!root["state"].is<const char*>()) return false;
                         id(charger_mode_g) = root["state"].as<std::string>();
+                        return true;
+                      });
+
+          - http_request.get:
+              url: "${ha_url}/api/states/select.si_mining_shed_solar_battery_guard_charger_voltage_source"
+              request_headers:
+                Authorization: "Bearer ${ha_token}"
+              capture_response: true
+              max_response_buffer_size: 2kB
+              on_response:
+                then:
+                  - lambda: |-
+                      json::parse_json(body, [](JsonObject root) -> bool {
+                        if (!root["state"].is<const char*>()) return false;
+                        id(charger_voltage_source_g) = root["state"].as<std::string>();
                         return true;
                       });
 
@@ -968,6 +997,15 @@ display:
           ? (id(charger_mode_push).has_state() ? id(charger_mode_push).state : "?")
           : (id(charger_mode_g).empty() ? "?" : id(charger_mode_g));
 
+      // Which voltage sensor the guard is actually using for its ON/OFF
+      // decision (see "Charger Voltage Source" on the guard device) -
+      // defaults to Renogy, matching that select's own default, so a
+      // not-yet-received value doesn't mislabel BM2 as the source.
+      std::string voltage_source = use_push
+          ? (id(charger_voltage_source_push).has_state() ? id(charger_voltage_source_push).state : "Renogy")
+          : (id(charger_voltage_source_g).empty() ? "Renogy" : id(charger_voltage_source_g));
+      bool renogy_is_source = voltage_source != "BM2";
+
       bool power_valid = use_push ? !isnan(id(battery_power_push).state) : id(battery_power_valid);
       float power = use_push ? id(battery_power_push).state : id(battery_power_g);
       float consumed_ah = use_push ? id(consumed_ah_push).state : id(consumed_ah_g);
@@ -1100,11 +1138,11 @@ display:
 
         char vbuf2[16];
         if (vc_valid) snprintf(vbuf2, sizeof(vbuf2), "%.2fV", voltage); else snprintf(vbuf2, sizeof(vbuf2), "--");
-        draw_row("V", "Renogy Voltage", vbuf2, id(col_white));
+        draw_row("V", renogy_is_source ? "Renogy Voltage *" : "Renogy Voltage", vbuf2, id(col_white));
 
         char bm2buf[16];
         if (bm2_valid) snprintf(bm2buf, sizeof(bm2buf), "%.2fV", bm2_voltage); else snprintf(bm2buf, sizeof(bm2buf), "--");
-        draw_row("V", "BM2 Voltage", bm2buf, id(col_white));
+        draw_row("V", renogy_is_source ? "BM2 Voltage" : "BM2 Voltage *", bm2buf, id(col_white));
 
         char pvpbuf[16];
         if (pv_valid_disp) snprintf(pvpbuf, sizeof(pvpbuf), "%.0fW", pv_power); else snprintf(pvpbuf, sizeof(pvpbuf), "--");
@@ -1152,9 +1190,9 @@ display:
 
         char vbuf[24];
         if (vc_valid) {
-          snprintf(vbuf, sizeof(vbuf), "%.2f V   %.2f A", voltage, current);
+          snprintf(vbuf, sizeof(vbuf), "%.2f V%s   %.2f A", voltage, renogy_is_source ? "*" : "", current);
         } else {
-          snprintf(vbuf, sizeof(vbuf), "-- V   -- A");
+          snprintf(vbuf, sizeof(vbuf), "-- V%s   -- A", renogy_is_source ? "*" : "");
         }
         it.print(it.get_width() / 2, 150, id(font_medium), id(col_white),
                   TextAlign::CENTER, vbuf);
@@ -1170,9 +1208,9 @@ display:
 
         char bm2buf3[24];
         if (bm2_valid) {
-          snprintf(bm2buf3, sizeof(bm2buf3), "BM2 Voltage: %.2f V", bm2_voltage);
+          snprintf(bm2buf3, sizeof(bm2buf3), "BM2 Voltage%s: %.2f V", renogy_is_source ? "" : "*", bm2_voltage);
         } else {
-          snprintf(bm2buf3, sizeof(bm2buf3), "BM2 Voltage: -- V");
+          snprintf(bm2buf3, sizeof(bm2buf3), "BM2 Voltage%s: -- V", renogy_is_source ? "" : "*");
         }
         it.print(it.get_width() / 2, 196, id(font_tiny), id(col_teal),
                   TextAlign::CENTER, bm2buf3);

@@ -288,6 +288,21 @@ select:
     restore_value: true
     optimistic: true
 
+  # Renogy and BM2 read the same battery but disagree slightly (different
+  # sense-lead placement/calibration), so let the reference source for the
+  # ON/OFF voltage decision be picked from Home Assistant instead of hard
+  # -coding Renogy. Defaults to Renogy since charger_turn_on/off thresholds
+  # above were tuned against it.
+  - platform: template
+    id: charger_voltage_source
+    name: "Charger Voltage Source"
+    options:
+      - "Renogy"
+      - "BM2"
+    initial_option: "Renogy"
+    restore_value: true
+    optimistic: true
+
   # --- TEMP DEBUG: lets you try different shunt UART baud rates live from
   # Home Assistant without reflashing. Watch `esphome logs` after changing
   # this - if "Last transmission too long ago" warnings stop and real
@@ -392,6 +407,23 @@ sensor:
     id: renogy_battery_percentage
     entity_id: sensor.renogy_controller_renogy_battery_percentage
     internal: true
+
+  # BM2 clip-on monitor's own voltage reading, imported the same way as
+  # Renogy's above - lets charger_should_run reference either source via
+  # the "Charger Voltage Source" select.
+  - platform: homeassistant
+    id: bm2_battery_voltage
+    entity_id: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
+    internal: true
+
+  - platform: template
+    id: bm2_battery_voltage_display
+    name: "BM2 Battery Voltage"
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    update_interval: 5s
+    lambda: return id(bm2_battery_voltage).state;
 
   - platform: tbd_smart_shunt
     battery_voltage:
@@ -546,9 +578,13 @@ binary_sensor:
       if (mode == "Force ON") return true;
       if (mode == "Force OFF") return false;
 
-      if (isnan(id(renogy_battery_voltage).state)) return {};  // no data yet from HA
+      // Voltage source is selectable (Renogy vs BM2) since the two sensors
+      // read the same battery slightly differently - see "Charger Voltage
+      // Source" select above.
+      bool use_bm2 = id(charger_voltage_source).state == "BM2";
+      float voltage = use_bm2 ? id(bm2_battery_voltage).state : id(renogy_battery_voltage).state;
+      if (isnan(voltage)) return {};  // no data yet from HA
 
-      float voltage = id(renogy_battery_voltage).state;
       // Lower turn-on floor while solar is actively charging - the AC
       // charger firing on a brief morning voltage dip that solar is about
       // to fix on its own appears to suppress MPPT output, so give the
@@ -699,11 +735,13 @@ display:
                   TextAlign::CENTER, buf);
       }
 
-      // Voltage (Renogy, via HA) / current (shunt)
+      // Voltage (source picked by "Charger Voltage Source", via HA) / current (shunt)
       char vbuf[24];
-      if (!isnan(id(renogy_battery_voltage).state)) {
-        snprintf(vbuf, sizeof(vbuf), "%.2f V   %.2f A",
-                  id(renogy_battery_voltage).state, id(batt_current).state);
+      bool disp_use_bm2 = id(charger_voltage_source).state == "BM2";
+      float disp_voltage = disp_use_bm2 ? id(bm2_battery_voltage).state : id(renogy_battery_voltage).state;
+      if (!isnan(disp_voltage)) {
+        snprintf(vbuf, sizeof(vbuf), "%.2f V (%s)   %.2f A",
+                  disp_voltage, disp_use_bm2 ? "BM2" : "RGY", id(batt_current).state);
       } else {
         snprintf(vbuf, sizeof(vbuf), "-- V   -- A");
       }
