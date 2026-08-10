@@ -569,6 +569,32 @@ binary_sensor:
                   id(consumed_ah) = 0.0;
                   ESP_LOGI("auto_calibrate", "Auto-calibrated to 100%% - sustained float detected");
 
+  # Raw (undebounced) "voltage is at/below the turn-on floor" condition,
+  # re-evaluated every loop like Battery At Float above - feeds
+  # charger_should_run's delayed_on filter below. History showed the
+  # mining shed's load (~15-20A) sags the battery's measured voltage hard
+  # enough on its own to graze the turn-on threshold at a moderate,
+  # non-critical SoC - without debouncing, a brief load spike could fire
+  # the AC charger even though voltage recovers seconds later once the
+  # load drops.
+  - platform: template
+    id: charger_voltage_low
+    internal: true
+    lambda: |-
+      bool use_bm2 = id(charger_voltage_source).state == "BM2";
+      float voltage = use_bm2 ? id(bm2_battery_voltage).state : id(renogy_battery_voltage).state;
+      if (isnan(voltage)) return {};
+
+      // Lower turn-on floor while solar is actively charging - see
+      // charger_should_run below for the full rationale.
+      bool solar_charging = id(renogy_charging_status).state == "mppt";
+      float on_th = solar_charging
+          ? id(charger_turn_on_voltage_solar_threshold).state
+          : id(charger_turn_on_voltage_threshold).state;
+      return voltage <= on_th;
+    filters:
+      - delayed_on: 2min
+
   - platform: template
     id: charger_should_run
     name: "AC Charger Should Run"
@@ -585,19 +611,14 @@ binary_sensor:
       float voltage = use_bm2 ? id(bm2_battery_voltage).state : id(renogy_battery_voltage).state;
       if (isnan(voltage)) return {};  // no data yet from HA
 
-      // Lower turn-on floor while solar is actively charging - the AC
-      // charger firing on a brief morning voltage dip that solar is about
-      // to fix on its own appears to suppress MPPT output, so give the
-      // panels more room to work with before also turning on the AC
-      // charger. Turn-off threshold is unaffected - that logic doesn't
-      // change based on solar status.
-      bool solar_charging = id(renogy_charging_status).state == "mppt";
-      float on_th = solar_charging
-          ? id(charger_turn_on_voltage_solar_threshold).state
-          : id(charger_turn_on_voltage_threshold).state;
       float off_th = id(charger_turn_off_voltage_threshold).state;
 
-      if (voltage <= on_th) return true;
+      // Turning ON goes through charger_voltage_low's 2min debounce (see
+      // above) so a transient load-sag dip doesn't fire the AC charger.
+      // Turning OFF stays instant/undebounced - there's no downside to
+      // recovering promptly once voltage genuinely clears the top
+      // threshold.
+      if (id(charger_voltage_low).state) return true;
       if (voltage >= off_th) return false;
       return {};  // inside the hysteresis band: hold previous state
 

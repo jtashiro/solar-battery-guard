@@ -19,6 +19,17 @@
 #      default to slugified from "Solar Battery Guard" - check
 #      Settings -> Devices & Services -> ESPHome -> Solar Battery Guard.
 
+# Required by pyscript/battery_voltage_chart.py (used by the charger
+# ON/OFF email alerts below). Packages merge arbitrary top-level HA config
+# keys, so this travels with the repo instead of needing a manual edit to
+# configuration.yaml - but the pyscript custom integration itself still
+# needs installing (HACS) and the .py file still needs copying to
+# /config/pyscript/ by hand, since packages only cover YAML config, not
+# custom_components or the pyscript script folder.
+pyscript:
+  allow_all_imports: true
+  hass_is_global: true
+
 input_select:
   solar_battery_guard_backlight_schedule_mode:
     name: "Guard Backlight Schedule Mode"
@@ -90,14 +101,36 @@ automation:
         entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
         to: "on"
     action:
-      - service: notify.send_message
-        target:
-          entity_id: notify.homeassistant_john_tashiro
+      # Renders a local PNG of the shunt's last 6h of voltage before
+      # sending the email - see pyscript/battery_voltage_chart.py for the
+      # renderer and its one-time setup. This blocks until the file is
+      # written, so the notify step below always attaches the current
+      # chart, not a stale one from a previous trigger.
+      - service: pyscript.render_battery_voltage_chart
+        data:
+          entity_id: sensor.solar_battery_guard_battery_voltage
+          hours: 6
+          output_path: /config/www/battery_voltage_chart.png
+      # notify.send_message (the entity-based action used elsewhere in
+      # this file) only exposes message/title - no way to attach an
+      # image. notify.homeassistant is the underlying legacy service and
+      # does support data.images - deliberately NOT setting data.html:
+      # true alongside it, since that combination crashes this HA
+      # version's smtp integration (_build_html_msg passes the raw
+      # html:true boolean into MIMEText instead of the rendered message -
+      # looks like an upstream HA bug, not something to work around in
+      # our own template). Plain-text message + image attachment avoids
+      # that code path entirely, and most mail clients still render an
+      # attached image inline anyway.
+      - service: notify.homeassistant
         data:
           title: "Solar Battery Guard - Charger ON"
           message: >
             AC charger turned ON - battery voltage is
             {{ states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage')|float|round(2) }}V.
+          data:
+            images:
+              - /config/www/battery_voltage_chart.png
 
   - id: "solar_battery_guard_charger_off_email_alert"
     alias: "Solar Battery Guard - Charger OFF Email Alert"
@@ -110,14 +143,23 @@ automation:
         entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
         to: "off"
     action:
-      - service: notify.send_message
-        target:
-          entity_id: notify.homeassistant_john_tashiro
+      # See the ON alert above for why this renders locally and calls
+      # notify.homeassistant directly instead of notify.send_message.
+      - service: pyscript.render_battery_voltage_chart
+        data:
+          entity_id: sensor.solar_battery_guard_battery_voltage
+          hours: 6
+          output_path: /config/www/battery_voltage_chart.png
+      # See the ON alert above for why data.html is deliberately omitted.
+      - service: notify.homeassistant
         data:
           title: "Solar Battery Guard - Charger OFF"
           message: >
             AC charger turned OFF - battery voltage is
             {{ states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage')|float|round(2) }}V.
+          data:
+            images:
+              - /config/www/battery_voltage_chart.png
 
   - id: "solar_battery_guard_charger_desync_alert"
     alias: "Solar Battery Guard - Charger Plug Desync Alert"
