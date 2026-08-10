@@ -81,8 +81,13 @@ automation:
     description: "Emails when the AC charger turns on due to low battery voltage."
     mode: single
     trigger:
+      # Triggers off the guard's own decision, not the smart plug - the
+      # plug's state change lags an extra automation hop (and the round
+      # trip to actually confirm the plug switched), so by the time it
+      # fired the voltage template had already drifted from the value
+      # that actually caused the decision.
       - platform: state
-        entity_id: switch.charger_and_fan_socket_2
+        entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
         to: "on"
     action:
       - service: notify.send_message
@@ -99,8 +104,10 @@ automation:
     description: "Emails when the AC charger turns off after battery voltage recovers."
     mode: single
     trigger:
+      # See the ON alert above for why this triggers off the guard's
+      # decision rather than the smart plug's state.
       - platform: state
-        entity_id: switch.charger_and_fan_socket_2
+        entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
         to: "off"
     action:
       - service: notify.send_message
