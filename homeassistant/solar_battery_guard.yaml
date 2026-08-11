@@ -111,6 +111,7 @@ automation:
           entity_id: sensor.solar_battery_guard_battery_voltage
           hours: 6
           output_path: /config/www/battery_voltage_chart.png
+          voltage_source_entity_id: select.si_mining_shed_solar_battery_guard_charger_voltage_source
       # notify.send_message (the entity-based action used elsewhere in
       # this file) only exposes message/title - no way to attach an
       # image. notify.homeassistant is the underlying legacy service and
@@ -127,7 +128,7 @@ automation:
           title: "Solar Battery Guard - Charger ON"
           message: >
             AC charger turned ON - battery voltage is
-            {{ states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage')|float|round(2) }}V.
+            {{ (states('sensor.si_mining_shed_bm2_battery_monitor_9598_voltage') if states('select.si_mining_shed_solar_battery_guard_charger_voltage_source') == 'BM2' else states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage'))|float|round(2) }}V.
           data:
             images:
               - /config/www/battery_voltage_chart.png
@@ -150,13 +151,14 @@ automation:
           entity_id: sensor.solar_battery_guard_battery_voltage
           hours: 6
           output_path: /config/www/battery_voltage_chart.png
+          voltage_source_entity_id: select.si_mining_shed_solar_battery_guard_charger_voltage_source
       # See the ON alert above for why data.html is deliberately omitted.
       - service: notify.homeassistant
         data:
           title: "Solar Battery Guard - Charger OFF"
           message: >
             AC charger turned OFF - battery voltage is
-            {{ states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage')|float|round(2) }}V.
+            {{ (states('sensor.si_mining_shed_bm2_battery_monitor_9598_voltage') if states('select.si_mining_shed_solar_battery_guard_charger_voltage_source') == 'BM2' else states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage'))|float|round(2) }}V.
           data:
             images:
               - /config/www/battery_voltage_chart.png
