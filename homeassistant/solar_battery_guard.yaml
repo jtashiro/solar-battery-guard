@@ -39,6 +39,22 @@ input_select:
       - "Sunset/Sunrise"
     initial: "Fixed Times"
 
+  # Drives which of the "Battery Voltage History" chart's several
+  # history-graph cards (one per range, one shown at a time via
+  # `conditional`) is visible on the Solar Battery Ops dashboard -
+  # history-graph's own hours_to_show isn't entity-driven, so switching
+  # ranges from the dashboard needs a helper + one card per range instead
+  # of a single templated card.
+  solar_battery_guard_voltage_chart_range:
+    name: "Voltage Chart Range"
+    icon: mdi:clock-outline
+    options:
+      - "6 Hours"
+      - "24 Hours"
+      - "3 Days"
+      - "7 Days"
+    initial: "24 Hours"
+
 input_datetime:
   solar_battery_guard_backlight_off_time:
     name: "Guard Backlight Off Time"
@@ -125,7 +141,12 @@ automation:
       # attached image inline anyway.
       - service: notify.homeassistant
         data:
-          title: "Solar Battery Guard - Charger ON"
+          # "TEST: " prefix distinguishes a manual run (e.g. the automation
+          # editor's "Run Actions" button, or automation.trigger called
+          # without variables) from a real trigger firing - automation.trigger
+          # sets trigger.platform to the literal None (not undefined) in that
+          # case, so `not trigger.platform` is what actually catches it.
+          title: "{{ 'TEST: ' if not trigger.platform else '' }}Solar Battery Guard - Charger ON"
           message: >
             AC charger turned ON - battery voltage is
             {{ (states('sensor.si_mining_shed_bm2_battery_monitor_9598_voltage') if states('select.si_mining_shed_solar_battery_guard_charger_voltage_source') == 'BM2' else states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage'))|float|round(2) }}V.
@@ -155,7 +176,8 @@ automation:
       # See the ON alert above for why data.html is deliberately omitted.
       - service: notify.homeassistant
         data:
-          title: "Solar Battery Guard - Charger OFF"
+          # See the ON alert above for why this prefix is conditional.
+          title: "{{ 'TEST: ' if not trigger.platform else '' }}Solar Battery Guard - Charger OFF"
           message: >
             AC charger turned OFF - battery voltage is
             {{ (states('sensor.si_mining_shed_bm2_battery_monitor_9598_voltage') if states('select.si_mining_shed_solar_battery_guard_charger_voltage_source') == 'BM2' else states('sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage'))|float|round(2) }}V.

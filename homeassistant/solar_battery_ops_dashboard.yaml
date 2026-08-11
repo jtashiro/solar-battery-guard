@@ -54,32 +54,9 @@ views:
     type: sections
     max_columns: 4
     sections:
-      # Row 1: solar-charging banner. Only rendered while Renogy reports
-      # actively MPPT solar charging.
-      - type: grid
-        # column_span claims all of the view's row-tracks for this
-        # section alone, so nothing else can sit beside it in the same
-        # row - this is what forces the next section onto a new row
-        # below. grid_options.columns: full (on the card itself, below)
-        # additionally fills that section's own width - the two settings
-        # do different things and both are needed for true full width.
-        column_span: 4
-        cards:
-          - type: conditional
-            conditions:
-              - entity: sensor.renogy_controller_renogy_charging_status
-                state: "mppt"
-            card:
-              type: markdown
-              content: "## ☀️ Solar Charging (MPPT)"
-            grid_options:
-              columns: full
-
-      # Row 2: SoC gauges (Shunt/Renogy/BM2 side by side). Kept in its own
-      # column_span: 4 section - separate from row 3 below - since a
-      # single section's internal grid packs multiple cards by its own
-      # rules (not necessarily one per row), so each intended row gets its
-      # own full-width section for a reliable, explicit result.
+      # Row 1: SoC gauges (Shunt/Renogy/BM2) horizontally, plus the
+      # solar-charging status banner (only rendered while Renogy reports
+      # actively MPPT solar charging) as a fourth item in the same row.
       - type: grid
         column_span: 4
         cards:
@@ -100,6 +77,79 @@ views:
                 name: BM2 %
                 min: 0
                 max: 100
+              - type: conditional
+                conditions:
+                  - entity: sensor.renogy_controller_renogy_charging_status
+                    state: "mppt"
+                card:
+                  type: markdown
+                  content: "## ☀️ Solar Charging (MPPT)"
+            grid_options:
+              columns: full
+
+      # Row 2: voltage history chart, alone and full width. Earlier
+      # attempts to share a row with the gauges via unequal fixed column
+      # counts (grid_options.columns is an absolute track count, not a
+      # fraction of the row) either left the row mostly blank on a wide
+      # screen, or - with columns: "full" - pushed the chart below the
+      # gauges instead of beside them (full spans the ENTIRE row for
+      # itself, like 1 / -1). With the chart as the only card in the row,
+      # "full" is exactly right - no column math to fight.
+      - type: grid
+        column_span: 4
+        cards:
+          - type: vertical-stack
+            cards:
+              # Renders as a dropdown row (input_select) - picks which of
+              # the conditional history-graph cards below is shown, since
+              # history-graph's hours_to_show isn't entity-driven and
+              # can't be templated on a single card.
+              - type: entities
+                entities:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    name: Battery Voltage History
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "6 Hours"
+                card:
+                  type: history-graph
+                  hours_to_show: 6
+                  entities: &voltage_chart_entities
+                    - entity: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
+                      name: Renogy
+                    - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
+                      name: BM2
+                    - entity: sensor.solar_battery_guard_battery_voltage
+                      name: Shunt
+                    - entity: binary_sensor.solar_battery_guard_ac_charger_should_run
+                      name: AC Charger
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "24 Hours"
+                card:
+                  type: history-graph
+                  hours_to_show: 24
+                  entities: *voltage_chart_entities
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "3 Days"
+                card:
+                  type: history-graph
+                  hours_to_show: 72
+                  entities: *voltage_chart_entities
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "7 Days"
+                card:
+                  type: history-graph
+                  hours_to_show: 168
+                  entities: *voltage_chart_entities
+            grid_options:
+              columns: full
 
       # Row 3: Charger Status / Voltages / Power & Current side by side.
       - type: grid
@@ -123,12 +173,12 @@ views:
               - type: entities
                 title: Voltages
                 entities:
-                  - entity: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
-                    name: Renogy voltage (via Guard)
-                  - entity: sensor.solar_battery_guard_battery_voltage
-                    name: Shunt voltage
                   - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
                     name: BM2 voltage
+                  - entity: sensor.solar_battery_guard_battery_voltage
+                    name: Shunt voltage
+                  - entity: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
+                    name: Renogy voltage (via Guard)
                   - entity: sensor.renogy_controller_renogy_pv_voltage
                     name: PV voltage
 
@@ -143,8 +193,7 @@ views:
                     name: PV power
                   - entity: sensor.renogy_controller_renogy_pv_current
                     name: PV current
-                  - entity: sensor.renogy_controller_renogy_load_power
-                    name: Load power
+
                   - entity: sensor.solar_battery_guard_consumed_ah
                     name: Consumed Ah since last calibration
             # Fills this card's own section width - redundant with the

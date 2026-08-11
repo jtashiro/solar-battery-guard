@@ -12,6 +12,14 @@ monitor + AC charger controller for a solar battery bank:
   Home Assistant, which switches your actual smart plug (Kasa/Tuya/Wemo)
   feeding the AC charger.
 
+## Goal
+
+Fully automate the battery bank so solar + battery alone maximize uptime,
+falling back to the AC charger only as needed to minimize downtime (not to
+run as much as possible) - every threshold in "Charger control logic" below
+is tuned toward that balance, favoring cheap/free solar recovery over paid
+AC runtime whenever it can do so without risking an over-discharge.
+
 ## Architecture
 
 ```
@@ -324,14 +332,23 @@ Driven by battery voltage, not the shunt's SoC - the shunt's coulomb-counted
 SoC drifts over days/weeks (see below) and can silently mask a real
 over-discharge, whereas voltage is a direct measurement. The voltage source
 itself is selectable (`Charger Voltage Source`: Renogy or BM2, since the two
-sensors read the same battery slightly differently) and adjustable
+sensors read the same battery slightly differently - defaults to BM2, since
+Renogy's HA-polled reading has been observed to lag/step behind the real
+battery voltage, eroding the turn-on safety margin) and adjustable
 thresholds (numbers, live-editable from Home Assistant), default 11.8V /
-13.6V:
+13.2V:
 
 - Voltage drops **to or below** `Charger Turn-On Voltage` -> charger turns ON
 - Voltage rises **to or above** `Charger Turn-Off Voltage` -> charger turns OFF
 - Between the two thresholds, the last state is held (hysteresis, prevents
   relay/plug chatter right at the boundary)
+
+`Charger Turn-Off Voltage` deliberately stops short of `Auto-Calibrate
+Voltage Threshold` (13.6V, a separate/independent setting - see "Calibrating
+State of Charge" above) - per the Goal above, an AC-only session only needs to
+get the battery back to a healthy level and hand off, not chase a full
+float charge on paid power. Auto-calibration still fires normally on days
+solar alone reaches 13.6V.
 
 While Renogy reports actively MPPT solar charging, both thresholds swap to
 lower solar-specific variants - `Charger Turn-On Voltage (Solar Charging)`
@@ -340,7 +357,7 @@ lower solar-specific variants - `Charger Turn-On Voltage (Solar Charging)`
 MPPT output, so this both avoids firing the AC charger on a brief dip solar
 is about to fix on its own, and hands the last stretch of the charge off to
 solar alone instead of keeping the AC charger on all the way to the normal
-13.6V ceiling.
+ceiling.
 
 The shunt's own `Charger Turn-On SoC` / `Charger Turn-Off SoC` numbers still
 exist, but only control the on-screen SoC gauge's red/yellow color bands -

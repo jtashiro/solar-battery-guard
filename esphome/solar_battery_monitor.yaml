@@ -999,11 +999,11 @@ display:
 
       // Which voltage sensor the guard is actually using for its ON/OFF
       // decision (see "Charger Voltage Source" on the guard device) -
-      // defaults to Renogy, matching that select's own default, so a
-      // not-yet-received value doesn't mislabel BM2 as the source.
+      // defaults to BM2, matching that select's own default, so a
+      // not-yet-received value doesn't mislabel Renogy as the source.
       std::string voltage_source = use_push
-          ? (id(charger_voltage_source_push).has_state() ? id(charger_voltage_source_push).state : "Renogy")
-          : (id(charger_voltage_source_g).empty() ? "Renogy" : id(charger_voltage_source_g));
+          ? (id(charger_voltage_source_push).has_state() ? id(charger_voltage_source_push).state : "BM2")
+          : (id(charger_voltage_source_g).empty() ? "BM2" : id(charger_voltage_source_g));
       bool renogy_is_source = voltage_source != "BM2";
 
       bool power_valid = use_push ? !isnan(id(battery_power_push).state) : id(battery_power_valid);
@@ -1084,10 +1084,10 @@ display:
           else if (soc < soc_off_th) soc_bar_color = id(col_yellow);
         }
         int bar1_y = header_clearance;
-        draw_bar(bar1_y, soc_valid, soc, "Renogy", soc_bar_color);
+        draw_bar(bar1_y, bm2_percent_valid_disp, bm2_percent, "BM2", id(col_teal));
 
         int bar2_y = bar1_y + bar_h + bar_gap;
-        draw_bar(bar2_y, bm2_percent_valid_disp, bm2_percent, "BM2", id(col_teal));
+        draw_bar(bar2_y, soc_valid, soc, "Renogy", soc_bar_color);
 
         // Battery Status, on its own line directly below the bars.
         int status_y = bar2_y + bar_h + static_cast<int>(h * 0.035f);
@@ -1136,13 +1136,13 @@ display:
           row_y += row_spacing;
         };
 
-        char vbuf2[16];
-        if (vc_valid) snprintf(vbuf2, sizeof(vbuf2), "%.2fV", voltage); else snprintf(vbuf2, sizeof(vbuf2), "--");
-        draw_row("V", renogy_is_source ? "Renogy Voltage *" : "Renogy Voltage", vbuf2, id(col_white));
-
         char bm2buf[16];
         if (bm2_valid) snprintf(bm2buf, sizeof(bm2buf), "%.2fV", bm2_voltage); else snprintf(bm2buf, sizeof(bm2buf), "--");
         draw_row("V", renogy_is_source ? "BM2 Voltage" : "BM2 Voltage *", bm2buf, id(col_white));
+
+        char vbuf2[16];
+        if (vc_valid) snprintf(vbuf2, sizeof(vbuf2), "%.2fV", voltage); else snprintf(vbuf2, sizeof(vbuf2), "--");
+        draw_row("V", renogy_is_source ? "Renogy Voltage *" : "Renogy Voltage", vbuf2, id(col_white));
 
         char pvpbuf[16];
         if (pv_valid_disp) snprintf(pvpbuf, sizeof(pvpbuf), "%.0fW", pv_power); else snprintf(pvpbuf, sizeof(pvpbuf), "--");

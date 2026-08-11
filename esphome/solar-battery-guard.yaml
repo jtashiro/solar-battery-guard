@@ -10,15 +10,24 @@ substitutions:
   soc_turn_on_default: "70"    # % SoC at/below which the SoC gauge shows red
   soc_turn_off_default: "90"   # % SoC at/above which the SoC gauge stops showing yellow
 
-  # Charger ON/OFF is driven by Renogy's battery voltage (via Home
-  # Assistant) instead of the shunt's coulomb-counted SoC - the shunt's SoC
-  # estimate drifts over days/weeks (see README), which caused the charger
-  # to silently fail to trigger during an actual over-discharge event
-  # (battery hit 10V manually-observed while the shunt still read well
-  # above its SoC turn-on threshold). Voltage is a direct measurement with
-  # no drift, so it's a more reliable trigger signal.
+  # Charger ON/OFF is driven by battery voltage (Renogy or BM2, both via
+  # Home Assistant - see "Charger Voltage Source" select further down)
+  # instead of the shunt's coulomb-counted SoC - the shunt's SoC estimate
+  # drifts over days/weeks (see README), which caused the charger to
+  # silently fail to trigger during an actual over-discharge event (battery
+  # hit 10V manually-observed while the shunt still read well above its
+  # SoC turn-on threshold). Voltage is a direct measurement with no drift,
+  # so it's a more reliable trigger signal.
   charger_turn_on_voltage_default: "11.8"   # V at/below which the AC charger turns ON - kept just above Renogy's own 11.7V undervoltage alarm
-  charger_turn_off_voltage_default: "13.6"  # V at/above which the AC charger turns OFF
+  # Lowered from 13.6V (2026-08-11) - chart analysis showed AC-only
+  # overnight sessions running the full climb to 13.6V, the most expensive
+  # part of each cycle. 13.2V still leaves a healthy margin above the
+  # turn-on floor and cuts real AC runtime per session; the tradeoff is
+  # that an AC-only night no longer reaches Auto-Calibrate Voltage
+  # Threshold (still 13.6V, a separate/independent setting - see
+  # full_charge_voltage_threshold below), so SoC auto-calibration now
+  # effectively only fires on days solar itself reaches that voltage.
+  charger_turn_off_voltage_default: "13.2"  # V at/above which the AC charger turns OFF
   # Lower turn-on floor used only while Renogy reports actively MPPT solar
   # charging - the AC charger turning on while panels are already recovering
   # the battery appears to suppress MPPT output, so this avoids firing the
@@ -309,15 +318,23 @@ select:
   # Renogy and BM2 read the same battery but disagree slightly (different
   # sense-lead placement/calibration), so let the reference source for the
   # ON/OFF voltage decision be picked from Home Assistant instead of hard
-  # -coding Renogy. Defaults to Renogy since charger_turn_on/off thresholds
-  # above were tuned against it.
+  # -coding Renogy. Defaults to BM2 - chart analysis (2026-08-11) showed
+  # Renogy's HA-polled reading lags and updates in coarse steps, letting
+  # real battery voltage sag well past the turn-on floor (down near its
+  # own 11.7V undervoltage alarm) before Renogy's stale value caught up
+  # and fired the charger. BM2 tracks in real time, so it fires closer to
+  # the intended threshold. NOTE: restore_value: true means this default
+  # only applies on a device's first-ever boot of this entity - an
+  # already-flashed Guard keeps whatever it last had stored, so switch it
+  # explicitly via the "Charger Voltage Source" select in HA if it's still
+  # on Renogy.
   - platform: template
     id: charger_voltage_source
     name: "Charger Voltage Source"
     options:
-      - "Renogy"
       - "BM2"
-    initial_option: "Renogy"
+      - "Renogy"
+    initial_option: "BM2"
     restore_value: true
     optimistic: true
 
