@@ -320,17 +320,27 @@ has selected.
 
 ## Charger control logic
 
-Driven by Renogy's battery voltage (imported from Home Assistant via
-`sensor.renogy_controller_renogy_battery_voltage`), not the shunt's SoC -
-the shunt's coulomb-counted SoC drifts over days/weeks (see below) and can
-silently mask a real over-discharge, whereas voltage is a direct
-measurement. Two adjustable thresholds (numbers, live-editable from Home
-Assistant), default 10.5V / 13.6V:
+Driven by battery voltage, not the shunt's SoC - the shunt's coulomb-counted
+SoC drifts over days/weeks (see below) and can silently mask a real
+over-discharge, whereas voltage is a direct measurement. The voltage source
+itself is selectable (`Charger Voltage Source`: Renogy or BM2, since the two
+sensors read the same battery slightly differently) and adjustable
+thresholds (numbers, live-editable from Home Assistant), default 11.8V /
+13.6V:
 
 - Voltage drops **to or below** `Charger Turn-On Voltage` -> charger turns ON
 - Voltage rises **to or above** `Charger Turn-Off Voltage` -> charger turns OFF
 - Between the two thresholds, the last state is held (hysteresis, prevents
   relay/plug chatter right at the boundary)
+
+While Renogy reports actively MPPT solar charging, both thresholds swap to
+lower solar-specific variants - `Charger Turn-On Voltage (Solar Charging)`
+(default 11.0V) and `Charger Turn-Off Voltage (Solar Charging)` (default
+12.6V). The AC charger running alongside active solar appears to suppress
+MPPT output, so this both avoids firing the AC charger on a brief dip solar
+is about to fix on its own, and hands the last stretch of the charge off to
+solar alone instead of keeping the AC charger on all the way to the normal
+13.6V ceiling.
 
 The shunt's own `Charger Turn-On SoC` / `Charger Turn-Off SoC` numbers still
 exist, but only control the on-screen SoC gauge's red/yellow color bands -

@@ -25,6 +25,13 @@ substitutions:
   # AC charger on a brief morning voltage dip that solar is about to fix on
   # its own.
   charger_turn_on_voltage_solar_default: "11.0"
+  # Lower turn-off ceiling used only while Renogy reports actively MPPT
+  # solar charging - same suppression concern as the turn-on floor above,
+  # but on the way out: once solar has the battery reasonably charged,
+  # hand the rest of the climb to float off to solar alone instead of
+  # keeping the AC charger running (and potentially throttling MPPT
+  # output) all the way to the normal 13.6V ceiling.
+  charger_turn_off_voltage_solar_default: "12.6"
 
 esphome:
   name: ${name}
@@ -244,6 +251,17 @@ number:
     max_value: 14.0
     step: 0.1
     initial_value: ${charger_turn_on_voltage_solar_default}
+    restore_value: true
+    optimistic: true
+
+  - platform: template
+    id: charger_turn_off_voltage_solar_threshold
+    name: "Charger Turn-Off Voltage (Solar Charging)"
+    unit_of_measurement: "V"
+    min_value: 8.0
+    max_value: 15.0
+    step: 0.1
+    initial_value: ${charger_turn_off_voltage_solar_default}
     restore_value: true
     optimistic: true
 
@@ -611,7 +629,13 @@ binary_sensor:
       float voltage = use_bm2 ? id(bm2_battery_voltage).state : id(renogy_battery_voltage).state;
       if (isnan(voltage)) return {};  // no data yet from HA
 
-      float off_th = id(charger_turn_off_voltage_threshold).state;
+      // Lower turn-off ceiling while solar is actively charging - see
+      // charger_turn_off_voltage_solar_threshold above for the rationale
+      // (mirrors charger_voltage_low's solar_charging check above).
+      bool solar_charging_off = id(renogy_charging_status).state == "mppt";
+      float off_th = solar_charging_off
+          ? id(charger_turn_off_voltage_solar_threshold).state
+          : id(charger_turn_off_voltage_threshold).state;
 
       // Turning ON goes through charger_voltage_low's 2min debounce (see
       // above) so a transient load-sag dip doesn't fire the AC charger.

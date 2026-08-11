@@ -169,6 +169,8 @@ views:
             name: Turn-on voltage (solar charging)
           - entity: number.si_mining_shed_solar_battery_guard_charger_turn_off_voltage
             name: Turn-off voltage
+          - entity: number.si_mining_shed_solar_battery_guard_charger_turn_off_voltage_solar_charging
+            name: Turn-off voltage (solar charging)
           - entity: number.solar_battery_guard_charger_turn_on_soc
             name: Turn-on SoC (display color only)
           - entity: number.solar_battery_guard_charger_turn_off_soc
