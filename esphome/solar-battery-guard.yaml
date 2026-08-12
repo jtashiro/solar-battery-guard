@@ -461,19 +461,40 @@ sensor:
     lambda: return id(bm2_battery_voltage).state;
 
   - platform: tbd_smart_shunt
+    # median (not sliding-window average) on all three - rejects a single
+    # corrupted UART frame (a bit-flip that still parses as valid hex, so
+    # hex_to_float's own parse-failure check doesn't catch it) without
+    # smearing/delaying a real, sustained voltage or current change. The
+    # window costs at most a couple of the shunt's own fast update
+    # cycles, not a meaningful lag for this use case.
     battery_voltage:
       name: "Battery Voltage"
       id: batt_voltage
       accuracy_decimals: 2
+      filters:
+        - median:
+            window_size: 3
+            send_every: 1
+            send_first_at: 1
     battery_current:
       name: "Battery Current"
       id: batt_current
       accuracy_decimals: 2
+      filters:
+        - median:
+            window_size: 3
+            send_every: 1
+            send_first_at: 1
     instantaneous_power:
       name: "Battery Power"
       id: batt_power
       accuracy_decimals: 1
       device_class: power
+      filters:
+        - median:
+            window_size: 3
+            send_every: 1
+            send_first_at: 1
       on_value:
         then:
           lambda: |-
