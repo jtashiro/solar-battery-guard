@@ -193,8 +193,18 @@ automation:
       # trip to actually confirm the plug switched), so by the time it
       # fired the voltage template had already drifted from the value
       # that actually caused the decision.
+      #
+      # from: "off" (not left open to any prior state) - without it, this
+      # also fires on an unavailable -> on transition, e.g. after an HA
+      # restart or the Guard's WiFi/API reconnecting, even though the
+      # charger was already on before the blip and never actually turned
+      # on just now. Confirmed 2026-08-12: two spurious "Charger OFF"
+      # emails traced to exactly this pattern on the OFF alert below: an
+      # unavailable blip immediately preceding each one in history, no
+      # real on/off cycle in between.
       - platform: state
         entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+        from: "off"
         to: "on"
     action:
       # Renders a local PNG of the shunt's last 6h of voltage before
@@ -240,9 +250,13 @@ automation:
     mode: single
     trigger:
       # See the ON alert above for why this triggers off the guard's
-      # decision rather than the smart plug's state.
+      # decision rather than the smart plug's state, and why from: "on"
+      # matters here (confirmed root cause of the 2026-08-12 spurious
+      # "Charger OFF" emails: unavailable -> off on reconnect, not a real
+      # on/off cycle).
       - platform: state
         entity_id: binary_sensor.solar_battery_guard_ac_charger_should_run
+        from: "on"
         to: "off"
     action:
       # See the ON alert above for why this renders locally and calls
