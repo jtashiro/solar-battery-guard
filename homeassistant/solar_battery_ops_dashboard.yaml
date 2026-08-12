@@ -54,9 +54,12 @@ views:
     type: sections
     max_columns: 4
     sections:
-      # Row 1: SoC gauges (Shunt/Renogy/BM2) horizontally, plus the
-      # solar-charging status banner (only rendered while Renogy reports
-      # actively MPPT solar charging) as a fourth item in the same row.
+      # Row 1: SoC gauges (Shunt/Renogy/BM2) horizontally, plus a Battery
+      # Bank Uptime card and the solar-charging status banner (only
+      # rendered while Renogy reports actively MPPT solar charging) in the
+      # same row. Uptime here means "BM2 and the shunt haven't both gone
+      # unavailable at once" - see the template binary_sensor/sensors in
+      # solar_battery_guard.yaml for the full rationale.
       - type: grid
         column_span: 4
         cards:
@@ -77,6 +80,25 @@ views:
                 name: BM2 %
                 min: 0
                 max: 100
+              - type: entities
+                title: Battery Bank Uptime
+                entities:
+                  # Unlike the ESPHome-device entities elsewhere in this
+                  # file, these three are plain template/history_stats
+                  # sensors with no device/area attached, so they get the
+                  # simple slugified-from-name entity_id, no
+                  # "solar_battery_guard_" area-prefix collision to guard
+                  # against here (see the ENTITY ID CAVEAT at the top of
+                  # this file, which is specifically about ESPHome
+                  # entities) - still marking "(unconfirmed)" since it's
+                  # a prediction, not independently checked against the
+                  # live instance.
+                  - entity: binary_sensor.battery_bank_up
+                    name: Status
+                  - entity: sensor.battery_bank_uptime
+                    name: Uptime
+                  - entity: sensor.battery_bank_uptime_30d
+                    name: 30-Day Uptime
               - type: conditional
                 conditions:
                   - entity: sensor.renogy_controller_renogy_charging_status

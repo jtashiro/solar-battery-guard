@@ -67,6 +67,76 @@ input_datetime:
     has_date: false
     initial: "07:00:00"
 
+# Battery bank uptime: "depleted" is inferred from BM2 (Bluetooth, its own
+# power path) and the shunt (via the Guard ESP32) BOTH going
+# unavailable/unknown at the same time - either one alone is a normal,
+# expected comms hiccup (WiFi/BLE drop), but both dropping together is a
+# much stronger signal the battery bank itself lost power and took the
+# load with it, without needing to pick and hand-tune a new critical
+# voltage threshold.
+template:
+  - binary_sensor:
+      - name: "Battery Bank Up"
+        unique_id: solar_battery_guard_battery_bank_up
+        device_class: connectivity
+        # NOTE: both these entities are briefly "unknown" right after a
+        # Home Assistant restart before their integrations report in, so
+        # this can show a false brief "down" blip on every HA restart -
+        # not a real depletion event, just a startup-ordering artifact.
+        state: >
+          {% set shunt_down = states('sensor.solar_battery_guard_battery_voltage') in ['unavailable', 'unknown'] %}
+          {% set bm2_down = states('sensor.si_mining_shed_bm2_battery_monitor_9598_voltage') in ['unavailable', 'unknown'] %}
+          {{ not (shunt_down and bm2_down) }}
+
+  - trigger:
+      - platform: time_pattern
+        minutes: "/1"
+      - platform: state
+        entity_id: binary_sensor.battery_bank_up
+    sensor:
+      # Human-readable "time since the bank was last down" - server-uptime
+      # style, reset by binary_sensor.battery_bank_up's
+      # own last_changed rather than a separately tracked counter, so it's
+      # correct even across a Home Assistant restart (last_changed survives
+      # in the recorder database).
+      - name: "Battery Bank Uptime"
+        unique_id: solar_battery_guard_battery_bank_uptime
+        icon: mdi:timer-outline
+        state: >
+          {% set start = states.binary_sensor.battery_bank_up.last_changed %}
+          {% set diff = (now() - start).total_seconds() | int %}
+          {% set months = diff // 2592000 %}
+          {% set diff = diff % 2592000 %}
+          {% set weeks = diff // 604800 %}
+          {% set diff = diff % 604800 %}
+          {% set days = diff // 86400 %}
+          {% set diff = diff % 86400 %}
+          {% set hours = diff // 3600 %}
+          {% set diff = diff % 3600 %}
+          {% set minutes = diff // 60 %}
+          {% set parts = [] %}
+          {% if months > 0 %}{% set parts = parts + [months ~ (' month' if months == 1 else ' months')] %}{% endif %}
+          {% if weeks > 0 %}{% set parts = parts + [weeks ~ (' week' if weeks == 1 else ' weeks')] %}{% endif %}
+          {% if days > 0 %}{% set parts = parts + [days ~ (' day' if days == 1 else ' days')] %}{% endif %}
+          {% if hours > 0 and months == 0 %}{% set parts = parts + [hours ~ (' hour' if hours == 1 else ' hours')] %}{% endif %}
+          {% if minutes > 0 and months == 0 and weeks == 0 %}{% set parts = parts + [minutes ~ (' min' if minutes == 1 else ' mins')] %}{% endif %}
+          {{ (parts[:2] | join(', ')) if parts else 'Just now' }}
+
+# history_stats needs its own top-level `sensor:` list (template: sensors
+# above are a different platform) - computes % of the trailing 30 days
+# binary_sensor.battery_bank_up spent "on" (up),
+# straight from recorder history.
+sensor:
+  - platform: history_stats
+    name: "Battery Bank Uptime 30d"
+    unique_id: solar_battery_guard_battery_bank_uptime_30d
+    entity_id: binary_sensor.battery_bank_up
+    state: "on"
+    type: ratio
+    end: "{{ now() }}"
+    duration:
+      days: 30
+
 automation:
   - id: "solar_battery_guard_ac_charger_control"
     alias: "Solar Battery Guard - AC Charger Control"
