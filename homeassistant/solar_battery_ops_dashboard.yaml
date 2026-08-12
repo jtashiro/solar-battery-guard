@@ -104,8 +104,20 @@ views:
                   - entity: sensor.renogy_controller_renogy_charging_status
                     state: "mppt"
                 card:
+                  # Templated (not static) so the PV numbers update live
+                  # while this card is showing, instead of just the "is
+                  # solar charging" banner text - markdown cards
+                  # re-render on any state change of an entity referenced
+                  # via states() in the template.
                   type: markdown
-                  content: "## ☀️ Solar Charging (MPPT)"
+                  content: >
+                    ## ☀️ Solar Charging (MPPT)
+
+                    **PV Power:** {{ states('sensor.renogy_controller_renogy_pv_power') }} W
+
+                    **PV Current:** {{ states('sensor.renogy_controller_renogy_pv_current') }} A
+
+                    **PV Voltage:** {{ states('sensor.renogy_controller_renogy_pv_voltage') }} V
             grid_options:
               columns: full
 
@@ -125,15 +137,26 @@ views:
               # Renders as a dropdown row (input_select) - picks which of
               # the conditional history-graph cards below is shown, since
               # history-graph's hours_to_show isn't entity-driven and
-              # can't be templated on a single card.
+              # can't be templated on a single card. The PV toggle below it
+              # works the same way - history-graph's entities list isn't
+              # entity-driven/templatable either, so showing/hiding PV
+              # needs a second helper + a card variant per
+              # range x toggle-state combination rather than a single
+              # dynamic card.
               - type: entities
                 entities:
                   - entity: input_select.solar_battery_guard_voltage_chart_range
                     name: Battery Voltage History
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    name: Show Solar PV
+              # --- PV hidden (default) - battery voltage keeps its own
+              # tight, readable scale. ---
               - type: conditional
                 conditions:
                   - entity: input_select.solar_battery_guard_voltage_chart_range
                     state: "6 Hours"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "off"
                 card:
                   type: history-graph
                   hours_to_show: 6
@@ -150,6 +173,8 @@ views:
                 conditions:
                   - entity: input_select.solar_battery_guard_voltage_chart_range
                     state: "24 Hours"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "off"
                 card:
                   type: history-graph
                   hours_to_show: 24
@@ -158,6 +183,8 @@ views:
                 conditions:
                   - entity: input_select.solar_battery_guard_voltage_chart_range
                     state: "3 Days"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "off"
                 card:
                   type: history-graph
                   hours_to_show: 72
@@ -166,10 +193,65 @@ views:
                 conditions:
                   - entity: input_select.solar_battery_guard_voltage_chart_range
                     state: "7 Days"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "off"
                 card:
                   type: history-graph
                   hours_to_show: 168
                   entities: *voltage_chart_entities
+              # --- PV shown - same chart/scale as battery voltage, so PV's
+              # 0-30V+ swing flattens the ~10-14V battery lines. Opt-in via
+              # the toggle above for exactly that reason. ---
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "6 Hours"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "on"
+                card:
+                  type: history-graph
+                  hours_to_show: 6
+                  entities: &voltage_chart_entities_with_pv
+                    - entity: sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage
+                      name: Renogy
+                    - entity: sensor.si_mining_shed_bm2_battery_monitor_9598_voltage
+                      name: BM2
+                    - entity: sensor.solar_battery_guard_battery_voltage
+                      name: Shunt
+                    - entity: sensor.renogy_controller_renogy_pv_voltage
+                      name: PV
+                    - entity: binary_sensor.solar_battery_guard_ac_charger_should_run
+                      name: AC Charger
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "24 Hours"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "on"
+                card:
+                  type: history-graph
+                  hours_to_show: 24
+                  entities: *voltage_chart_entities_with_pv
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "3 Days"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "on"
+                card:
+                  type: history-graph
+                  hours_to_show: 72
+                  entities: *voltage_chart_entities_with_pv
+              - type: conditional
+                conditions:
+                  - entity: input_select.solar_battery_guard_voltage_chart_range
+                    state: "7 Days"
+                  - entity: input_boolean.solar_battery_guard_show_pv_on_chart
+                    state: "on"
+                card:
+                  type: history-graph
+                  hours_to_show: 168
+                  entities: *voltage_chart_entities_with_pv
             grid_options:
               columns: full
 

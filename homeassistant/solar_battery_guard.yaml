@@ -55,6 +55,16 @@ input_select:
       - "7 Days"
     initial: "24 Hours"
 
+# Toggles whether the "Battery Voltage History" chart overlays PV voltage
+# on the same axis - PV swings 0-30V+ while battery voltage only moves in
+# a ~10-14V band, and history-graph has no secondary y-axis, so showing PV
+# flattens the battery lines. Off by default so the chart stays readable;
+# opt in when you specifically want to see the PV/charger correlation.
+input_boolean:
+  solar_battery_guard_show_pv_on_chart:
+    name: "Show Solar PV on Voltage Chart"
+    icon: mdi:solar-power
+
 input_datetime:
   solar_battery_guard_backlight_off_time:
     name: "Guard Backlight Off Time"
