@@ -99,6 +99,24 @@ views:
                     name: Uptime
                   - entity: sensor.battery_bank_uptime_30d
                     name: 30-Day Uptime
+              # Iframing HA's native Bluetooth Connection Monitor
+              # (/config/bluetooth/connection-monitor) didn't lay out well
+              # nested in a dashboard card, so this rebuilds the same idea
+              # instead. Renogy's rssi/last_updated/data_source are
+              # confirmed present as attributes (not separate entities) on
+              # sensor.renogy_controller_renogy_device_id via Developer
+              # Tools -> States. BM2's own Signal Strength diagnostic
+              # entity exists too, just disabled by default - enabled
+              # 2026-08-12 rather than reinventing it via pyscript.
+              - type: markdown
+                title: Bluetooth Connection
+                content: >
+                  **Renogy**: {{ state_attr('sensor.renogy_controller_renogy_device_id', 'rssi') }} dBm ·
+                  {{ relative_time(state_attr('sensor.renogy_controller_renogy_device_id', 'last_updated') | as_datetime) }} ago ·
+                  Source: {{ state_attr('sensor.renogy_controller_renogy_device_id', 'data_source') }}
+
+                  **BM2**: {{ states('sensor.bm2_battery_monitor_9598_signal_strength') }} dBm ·
+                  {{ relative_time(states.sensor.bm2_battery_monitor_9598_signal_strength.last_changed) }} ago
               - type: conditional
                 conditions:
                   - entity: sensor.renogy_controller_renogy_charging_status
