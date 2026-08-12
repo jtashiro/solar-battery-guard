@@ -77,6 +77,17 @@ input_datetime:
     has_date: false
     initial: "07:00:00"
 
+  # Persists across HA restarts (unlike binary_sensor.battery_bank_up's
+  # own last_changed - see the Battery Bank Uptime sensor below for why
+  # that's not restart-safe on its own). Only written by the automation
+  # of the same name further down, on a genuine (2+ minute) down->up
+  # recovery - never touched by a restart itself, so it keeps whatever
+  # value it had across any number of reboots until the next real event.
+  solar_battery_guard_battery_bank_up_since:
+    name: "Battery Bank Up Since"
+    has_date: true
+    has_time: true
+
 # Battery bank uptime: "depleted" is inferred from BM2 (Bluetooth, its own
 # power path) and the shunt (via the Guard ESP32) BOTH going
 # unavailable/unknown at the same time - either one alone is a normal,
@@ -105,15 +116,28 @@ template:
         entity_id: binary_sensor.battery_bank_up
     sensor:
       # Human-readable "time since the bank was last down" - server-uptime
-      # style, reset by binary_sensor.battery_bank_up's
-      # own last_changed rather than a separately tracked counter, so it's
-      # correct even across a Home Assistant restart (last_changed survives
-      # in the recorder database).
+      # style. Reads input_datetime.battery_bank_up_since (set by the
+      # tracker automation further down) rather than
+      # binary_sensor.battery_bank_up's own last_changed directly -
+      # template entities are recreated from scratch on every HA
+      # restart, so last_changed resets to the restart time even when
+      # the bank was never actually down, and separately both BM2 and
+      # the shunt are briefly "unknown" for a few seconds on every
+      # restart before their integrations reconnect (see that binary
+      # sensor's own NOTE), which would otherwise cost a real uptime
+      # streak on every single reboot. Falls back to last_changed only
+      # before the helper has ever been set (fresh install).
       - name: "Battery Bank Uptime"
         unique_id: solar_battery_guard_battery_bank_uptime
         icon: mdi:timer-outline
         state: >
-          {% set start = states.binary_sensor.battery_bank_up.last_changed %}
+          {% set helper = states('input_datetime.solar_battery_guard_battery_bank_up_since') %}
+          {# .astimezone() attaches local tzinfo - as_datetime() on a plain
+             input_datetime string can come back naive, and subtracting a
+             naive datetime from now()'s timezone-aware value below raises
+             an exception (which is what "Uptime: Unavailable" actually
+             was) - a no-op if it's already aware. #}
+          {% set start = as_datetime(helper).astimezone() if helper not in ['unknown', 'unavailable', none] else states.binary_sensor.battery_bank_up.last_changed %}
           {% set diff = (now() - start).total_seconds() | int %}
           {% set months = diff // 2592000 %}
           {% set diff = diff % 2592000 %}
@@ -148,6 +172,34 @@ sensor:
       days: 30
 
 automation:
+  - id: "solar_battery_guard_battery_bank_up_since_tracker"
+    alias: "Solar Battery Guard - Battery Bank Up Since Tracker"
+    description: >
+      Records when the battery bank was last confirmed up into a helper
+      that survives HA restarts, for the Battery Bank Uptime sensor to
+      read instead of binary_sensor.battery_bank_up's own last_changed.
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.battery_bank_up
+        from: "off"
+        to: "on"
+    condition:
+      # Ignore the brief few-seconds "off" blip that happens on every HA
+      # restart, before BM2/the shunt's integrations reconnect (see the
+      # NOTE on binary_sensor.battery_bank_up's own template) - only a
+      # genuine 2+ minute down period updates this timestamp, so a
+      # normal restart doesn't cost an otherwise-real uptime streak.
+      - condition: template
+        value_template: >
+          {{ (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= 120 }}
+    action:
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.solar_battery_guard_battery_bank_up_since
+        data:
+          timestamp: "{{ trigger.to_state.last_changed.timestamp() }}"
+
   - id: "solar_battery_guard_ac_charger_control"
     alias: "Solar Battery Guard - AC Charger Control"
     description: >

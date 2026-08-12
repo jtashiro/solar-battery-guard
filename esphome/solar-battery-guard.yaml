@@ -461,17 +461,27 @@ sensor:
     lambda: return id(bm2_battery_voltage).state;
 
   - platform: tbd_smart_shunt
-    # median (not sliding-window average) on all three - rejects a single
-    # corrupted UART frame (a bit-flip that still parses as valid hex, so
-    # hex_to_float's own parse-failure check doesn't catch it) without
-    # smearing/delaying a real, sustained voltage or current change. The
-    # window costs at most a couple of the shunt's own fast update
-    # cycles, not a meaningful lag for this use case.
+    # Range-reject lambda BEFORE median (not after) on all three - a
+    # corrupted UART frame (bit-flip that still parses as valid hex, so
+    # hex_to_float's own parse-failure check doesn't catch it) can produce
+    # a wildly out-of-range value, e.g. a real ~250,000,000,000,000,000V
+    # spike recorded 2026-08-12 that blew out every history chart's
+    # y-axis. Rejecting it outright (return {} = drop the reading, same
+    # as an ESPHome filter lambda returning no value) keeps it from ever
+    # entering the median window - simply relying on median alone doesn't
+    # fully cover this, since send_first_at: 1 publishes the very first
+    # post-boot reading un-medianed, which is exactly when a UART resync
+    # glitch is most likely. The median stage after this one still
+    # handles smaller single-frame noise that stays within a plausible
+    # range.
     battery_voltage:
       name: "Battery Voltage"
       id: batt_voltage
       accuracy_decimals: 2
       filters:
+        - lambda: |-
+            if (x < 0.0f || x > 20.0f) return {};
+            return x;
         - median:
             window_size: 3
             send_every: 1
@@ -481,6 +491,9 @@ sensor:
       id: batt_current
       accuracy_decimals: 2
       filters:
+        - lambda: |-
+            if (x < -200.0f || x > 200.0f) return {};
+            return x;
         - median:
             window_size: 3
             send_every: 1
@@ -491,6 +504,9 @@ sensor:
       accuracy_decimals: 1
       device_class: power
       filters:
+        - lambda: |-
+            if (x < -3000.0f || x > 3000.0f) return {};
+            return x;
         - median:
             window_size: 3
             send_every: 1
