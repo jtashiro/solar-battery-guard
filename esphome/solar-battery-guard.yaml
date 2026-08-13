@@ -27,7 +27,11 @@ substitutions:
   # Threshold (still 13.6V, a separate/independent setting - see
   # full_charge_voltage_threshold below), so SoC auto-calibration now
   # effectively only fires on days solar itself reaches that voltage.
-  charger_turn_off_voltage_default: "13.2"  # V at/above which the AC charger turns OFF
+  #
+  # Lowered further to 12.8V (2026-08-13) - roughly the bank's nominal
+  # voltage, to cut AC-only overnight runtime (and cost) further. Same
+  # auto-calibrate tradeoff as above, now more pronounced.
+  charger_turn_off_voltage_default: "12.8"  # V at/above which the AC charger turns OFF
   # Lower turn-on floor used only while Renogy reports actively MPPT solar
   # charging - the AC charger turning on while panels are already recovering
   # the battery appears to suppress MPPT output, so this avoids firing the

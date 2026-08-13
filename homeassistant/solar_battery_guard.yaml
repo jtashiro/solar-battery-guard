@@ -259,17 +259,26 @@ automation:
         from: "off"
         to: "on"
     action:
-      # Renders a local PNG of the shunt's last 6h of voltage before
-      # sending the email - see pyscript/battery_voltage_chart.py for the
-      # renderer and its one-time setup. This blocks until the file is
-      # written, so the notify step below always attaches the current
-      # chart, not a stale one from a previous trigger.
+      # Renders a local PNG of the last 6h of voltage before sending the
+      # email - see pyscript/battery_voltage_chart.py for the renderer and
+      # its one-time setup. This blocks until the file is written, so the
+      # notify step below always attaches the current chart, not a stale
+      # one from a previous trigger.
       - service: pyscript.render_battery_voltage_chart
         data:
-          entity_id: sensor.solar_battery_guard_battery_voltage
+          # Charts whichever sensor is actually driving charger_should_run
+          # (BM2 or Renogy), not the shunt - the shunt and BM2/Renogy read
+          # the battery from different tap points and can diverge under
+          # charge current, which made the chart look inconsistent with
+          # the voltage quoted in the email body below (both now read the
+          # same source, and the entity's own friendly name already
+          # labels which one it is).
+          entity_id: >
+            {{ 'sensor.si_mining_shed_bm2_battery_monitor_9598_voltage'
+               if states('select.si_mining_shed_solar_battery_guard_charger_voltage_source') == 'BM2'
+               else 'sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage' }}
           hours: 6
           output_path: /config/www/battery_voltage_chart.png
-          voltage_source_entity_id: select.si_mining_shed_solar_battery_guard_charger_voltage_source
       # notify.send_message (the entity-based action used elsewhere in
       # this file) only exposes message/title - no way to attach an
       # image. notify.homeassistant is the underlying legacy service and
@@ -315,10 +324,14 @@ automation:
       # notify.homeassistant directly instead of notify.send_message.
       - service: pyscript.render_battery_voltage_chart
         data:
-          entity_id: sensor.solar_battery_guard_battery_voltage
+          # See the ON alert above for why this is templated to match
+          # whichever sensor drives the decision, instead of the shunt.
+          entity_id: >
+            {{ 'sensor.si_mining_shed_bm2_battery_monitor_9598_voltage'
+               if states('select.si_mining_shed_solar_battery_guard_charger_voltage_source') == 'BM2'
+               else 'sensor.si_mining_shed_solar_battery_guard_renogy_battery_voltage' }}
           hours: 6
           output_path: /config/www/battery_voltage_chart.png
-          voltage_source_entity_id: select.si_mining_shed_solar_battery_guard_charger_voltage_source
       # See the ON alert above for why data.html is deliberately omitted.
       - service: notify.homeassistant
         data:

@@ -75,7 +75,7 @@ def _render_chart_sync(points, output_path, tz_name, title):
 
 
 @service
-def render_battery_voltage_chart(entity_id=None, hours=6, output_path=None, voltage_source_entity_id=None):
+def render_battery_voltage_chart(entity_id=None, hours=6, output_path=None):
     """yaml
 name: Render Battery Voltage Chart
 description: >
@@ -92,13 +92,6 @@ fields:
   output_path:
     description: Where to save the PNG. Parent directory is created if missing.
     example: /config/www/battery_voltage_chart.png
-  voltage_source_entity_id:
-    description: >
-      Optional select entity whose current option names which sensor
-      (Renogy/BM2) is actually driving the AC charger ON/OFF decision.
-      When given, its value is prepended to the chart title as "<source>:
-      <title>".
-    example: select.si_mining_shed_solar_battery_guard_charger_voltage_source
     """
     from homeassistant.components.recorder import history
 
@@ -124,10 +117,5 @@ fields:
 
     current_state = hass.states.get(entity_id)
     title = current_state.attributes.get("friendly_name", entity_id) if current_state else entity_id
-
-    if voltage_source_entity_id:
-        source_state = hass.states.get(voltage_source_entity_id)
-        if source_state:
-            title = f"{source_state.state}: {title}"
 
     task.executor(_render_chart_sync, points, output_path, hass.config.time_zone, title)
