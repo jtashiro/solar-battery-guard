@@ -273,6 +273,28 @@ views:
             grid_options:
               columns: full
 
+      # Row 2b: Solar generation vs. charging status, full width - shows
+      # whether the Renogy controller is actively harvesting (mppt) or has
+      # stopped (deactivated/floating) against the day's cumulative Wh, so
+      # a flat stretch in generation can be told apart from "no more sun"
+      # vs. "battery already satisfied, controller idle with headroom left
+      # on the table". Fixed 7-day window (unlike the voltage chart's
+      # range picker above) since day-over-day generation comparison is
+      # the whole point here.
+      - type: grid
+        column_span: 4
+        cards:
+          - type: history-graph
+            title: Generation + Charging Status
+            hours_to_show: 168
+            entities:
+              - entity: sensor.renogy_controller_renogy_power_generation_today
+                name: Power Generation Today
+              - entity: sensor.renogy_controller_renogy_charging_status
+                name: Charging Status
+            grid_options:
+              columns: full
+
       # Row 3: Charger Status / Voltages / Power & Current side by side.
       - type: grid
         column_span: 4
